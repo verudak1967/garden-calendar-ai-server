@@ -116,7 +116,7 @@ def cache_key(query: str, context: str) -> str:
 
 # ========== DEEPSEEK ==========
 
-async def call_deepseek(messages: list, max_tokens: int = 800) -> str:
+async def call_deepseek(messages: list, max_tokens: int = 2500) -> str:
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -140,6 +140,9 @@ async def call_deepseek(messages: list, max_tokens: int = 800) -> str:
             detail=f"DeepSeek error {resp.status_code}: {resp.text}",
         )
     data = resp.json()
+    finish_reason = data["choices"][0].get("finish_reason", "unknown")
+    if finish_reason == "length":
+        print(f"WARNING: response truncated by max_tokens, query was: {messages[-1]['content'][:50]}")
     return data["choices"][0]["message"]["content"]
 
 
@@ -179,7 +182,7 @@ async def ask(req: AskRequest):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    text = await call_deepseek(messages)
+    text = await call_deepseek(messages, max_tokens=2500)
 
     # 5. Сохраняем в кэш
     if len(server_cache) > 1000:
