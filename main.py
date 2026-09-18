@@ -27,7 +27,7 @@ DEEPSEEK_MODEL = "deepseek-flash"
 # === Провайдер для vision (OpenRouter) ===
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_VISION_MODEL = "qwen/qwen-2.5-vl-72b-instruct:free"
+OPENROUTER_VISION_MODEL = "qwen/qwen2.5-vl-32b-instruct:free"
 
 if not DEEPSEEK_API_KEY:
     raise RuntimeError("DEEPSEEK_API_KEY environment variable is not set")
