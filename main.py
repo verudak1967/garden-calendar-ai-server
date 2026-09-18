@@ -31,11 +31,16 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 # Список vision-моделей для автоматического перебора.
 # Если первая вернёт 404/402 — пробуем следующую.
 OPENROUTER_VISION_MODELS = [
-    "qwen/qwen-2.5-vl-7b-instruct:free",
-    "google/gemini-2.0-flash-exp:free",
-    "nvidia/nemotron-nano-12b-v2-vl:free",
-    "google/gemma-3-27b-it:free",
-    "mistralai/mistral-small-3.1-24b-instruct:free",
+    "inclusionai/ling-3.0-flash-vl:free",
+    "google/gemma-4-31b-it:free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nex-agi/nex-n2.5-pro:free",
+    "nex-agi/nex-n2.5-mini:free",
+    "dots-studio/dots-3-note-preview:free",
+    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
+    "thinkingmachines/inkling-small:free",
+    "qwen/qwen2.5-vl-32b-instruct:free",
+    "openrouter/free",
 ]
 
 if not DEEPSEEK_API_KEY:
