@@ -388,5 +388,5 @@ async def ask_photo(req: AskPhotoRequest):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    text = await call_openrouter_vision(messages, max_tokens=1500)
+    text = await call_openrouter_vision(messages, max_tokens=2000)
     return AiResponse(text=text)
