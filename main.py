@@ -27,7 +27,16 @@ DEEPSEEK_MODEL = "deepseek-flash"
 # === Провайдер для vision (OpenRouter) ===
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-OPENROUTER_VISION_MODEL = "qwen/qwen2.5-vl-32b-instruct:free"
+
+# Список vision-моделей для автоматического перебора.
+# Если первая вернёт 404/402 — пробуем следующую.
+OPENROUTER_VISION_MODELS = [
+    "qwen/qwen-2.5-vl-7b-instruct:free",
+    "google/gemini-2.0-flash-exp:free",
+    "nvidia/nemotron-nano-12b-v2-vl:free",
+    "google/gemma-3-27b-it:free",
+    "mistralai/mistral-small-3.1-24b-instruct:free",
+]
 
 if not DEEPSEEK_API_KEY:
     raise RuntimeError("DEEPSEEK_API_KEY environment variable is not set")
@@ -206,35 +215,66 @@ async def call_deepseek(messages: list, max_tokens: int = 2500) -> str:
     return data["choices"][0]["message"]["content"]
 
 
-# ========== OPENROUTER (vision) ==========
+# ========== OPENROUTER (vision) с автоматическим перебором моделей ==========
 
 async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> str:
+    """
+    Перебирает модели из OPENROUTER_VISION_MODELS, пока одна не сработает.
+    При ошибке 404 (модель удалена) или 402 (недоступна) — идёт к следующей.
+    """
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://garden-calendar.app",
         "X-Title": "Garden Calendar",
     }
-    payload = {
-        "model": OPENROUTER_VISION_MODEL,
-        "messages": messages,
-        "max_tokens": max_tokens,
-    }
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        resp = await client.post(
-            f"{OPENROUTER_BASE_URL}/chat/completions",
-            headers=headers,
-            json=payload,
-        )
-    if resp.status_code != 200:
-        raise HTTPException(
-            status_code=502,
-            detail=f"OpenRouter error {resp.status_code}: {resp.text}",
-        )
-    data = resp.json()
-    if "choices" not in data or not data["choices"]:
-        raise HTTPException(status_code=502, detail=f"OpenRouter empty response: {data}")
-    return data["choices"][0]["message"]["content"]
+
+    last_error = "no models tried"
+
+    for model_id in OPENROUTER_VISION_MODELS:
+        try:
+            payload = {
+                "model": model_id,
+                "messages": messages,
+                "max_tokens": max_tokens,
+            }
+            async with httpx.AsyncClient(timeout=90.0) as client:
+                resp = await client.post(
+                    f"{OPENROUTER_BASE_URL}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("choices") and data["choices"]:
+                    content = data["choices"][0]["message"]["content"]
+                    print(f"Vision model OK: {model_id}")
+                    return content
+                else:
+                    print(f"Model {model_id} returned no choices: {data}")
+                    last_error = f"{model_id}: no choices"
+                    continue
+
+            elif resp.status_code in (404, 402):
+                print(f"Model {model_id} unavailable ({resp.status_code}), trying next...")
+                last_error = f"{model_id}: {resp.status_code}"
+                continue
+
+            else:
+                print(f"Model {model_id} error {resp.status_code}: {resp.text}")
+                last_error = f"{model_id}: {resp.status_code} {resp.text[:200]}"
+                continue
+
+        except Exception as e:
+            print(f"Exception on {model_id}: {e}")
+            last_error = f"{model_id}: exception {e}"
+            continue
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"All vision models failed. Last error: {last_error}"
+    )
 
 
 # ========== LLM-КЛАССИФИКАТОР ==========
@@ -320,7 +360,7 @@ async def ask(req: AskRequest):
 
 @app.post("/api/ask-photo", response_model=AiResponse)
 async def ask_photo(req: AskPhotoRequest):
-    """Анализ фото растения через OpenRouter + Qwen2.5-VL."""
+    """Анализ фото растения через OpenRouter с автоматическим перебором vision-моделей."""
     check_daily_limit(req.device_id)
 
     system_prompt = (
