@@ -63,6 +63,14 @@ class AskPhotoRequest(BaseModel):
 
 class AiResponse(BaseModel):
     text: str
+    used: Optional[int] = None
+    limit: Optional[int] = None
+    model: Optional[str] = None
+
+
+class UsageResponse(BaseModel):
+    used: int
+    limit: int
 
 
 # ========== СТОП-СЛОВА ==========
@@ -110,17 +118,13 @@ GARDEN_MARKERS = [
     "черенкован", "окучиван", "пикирова",
     "секатор", "сучкорез", "культиватор", "плоскорез", "мотыг",
     "опрыскивател", "садовый инвентар", "бордюрн",
-    # Уход и общие садовые действия
     "уход за", "выращиван", "посадк", "пересадк", "полив", "рыхлен",
     "прополк", "борьб с", "обработк", "защит растен",
-    # Ягоды и фрукты
     "голубик", "брусник", "ежевик", "крыжовник", "жимолост",
     "ирг", "облепих", "айв", "абрикос", "персик", "слив",
     "черешн", "виноград", "арбуз", "дын", "черноплодн", "рябин",
-    # Общие категории
     "ягод", "фрукт", "овощ", "злак", "корнеплод",
     "сорт", "гибрид", "подвой", "привой",
-    # Биология растений
     "корн", "стебел", "побег", "бутон", "завяз", "соцвети",
     "фотосинтез", "хлорофилл", "корнеплод", "клубн",
 ]
@@ -156,7 +160,6 @@ def has_short_garden_term(query: str) -> bool:
 def rule_filter(query: str) -> tuple[str, str]:
     q = query.lower().strip()
 
-    # Системные запросы из приложения — всегда садовые по шаблону
     SYSTEM_PREFIXES = (
         "расскажи про уход за культурой:",
         "какие вредители опасны для культуры:",
@@ -192,18 +195,26 @@ daily_usage: dict = defaultdict(lambda: {"date": None, "count": 0})
 FREE_DAILY_LIMIT = 30
 
 
-def check_daily_limit(device_id: str) -> None:
+def get_daily_usage(device_id: str) -> tuple[int, int]:
+    """Возвращает (used, limit) БЕЗ инкремента."""
     today = date.today().isoformat()
     rec = daily_usage[device_id]
     if rec["date"] != today:
         rec["date"] = today
         rec["count"] = 0
-    if rec["count"] >= FREE_DAILY_LIMIT:
+    return rec["count"], FREE_DAILY_LIMIT
+
+
+def increment_daily_usage(device_id: str) -> tuple[int, int]:
+    """Инкрементирует счётчик и возвращает (used, limit). 429, если превышен."""
+    used, limit = get_daily_usage(device_id)
+    if used >= limit:
         raise HTTPException(
             status_code=429,
-            detail=f"Дневной лимит исчерпан ({FREE_DAILY_LIMIT} запросов). Попробуйте завтра."
+            detail=f"Дневной лимит исчерпан ({limit} запросов). Попробуйте завтра."
         )
-    rec["count"] += 1
+    daily_usage[device_id]["count"] += 1
+    return daily_usage[device_id]["count"], limit
 
 
 # ========== КЭШ ==========
@@ -247,17 +258,17 @@ async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
     print(
         f"DeepSeek: finish_reason={finish_reason}, "
         f"prompt_tokens={usage.get('prompt_tokens')}, "
-        f"completion_tokens={usage.get('completion_tokens')}, "
-        f"max_tokens={max_tokens}"
+        f"completion_tokens={usage.get('completion_tokens')}"
     )
     if finish_reason == "length":
-        print(f"WARNING: response truncated by max_tokens! Increase limit.")
+        print("WARNING: response truncated by max_tokens!")
     return choice["message"]["content"]
 
 
 # ========== OPENROUTER (vision) с автоматическим перебором моделей ==========
 
-async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> str:
+async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tuple[str, str]:
+    """Возвращает (text, model_id) — текст ответа и id модели, которая сработала."""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -286,7 +297,7 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> str:
                 if data.get("choices") and data["choices"]:
                     content = data["choices"][0]["message"]["content"]
                     print(f"Vision model OK: {model_id}")
-                    return content
+                    return content, model_id
                 else:
                     print(f"Model {model_id} returned no choices: {data}")
                     last_error = f"{model_id}: no choices"
@@ -350,14 +361,21 @@ def health():
     return {"status": "ok", "service": "garden-calendar-ai"}
 
 
+@app.get("/api/usage", response_model=UsageResponse)
+def get_usage(device_id: str = "unknown"):
+    """Возвращает текущее использование дневного лимита для устройства."""
+    used, limit = get_daily_usage(device_id)
+    return UsageResponse(used=used, limit=limit)
+
+
 @app.post("/api/ask", response_model=AiResponse)
 async def ask(req: AskRequest):
-    check_daily_limit(req.device_id)
-
+    # 1. Rule-фильтр (без обращения к AI)
     verdict, reason = rule_filter(req.query)
     if verdict == "deny":
         raise HTTPException(status_code=400, detail=reason)
 
+    # 2. LLM-классификатор для пограничных случаев
     if verdict == "check":
         if not await classify_topic(req.query):
             raise HTTPException(
@@ -365,10 +383,15 @@ async def ask(req: AskRequest):
                 detail="Приложение отвечает только на вопросы о садоводстве и растениях"
             )
 
+    # 3. Инкремент счётчика только после успешных фильтров
+    used, limit = increment_daily_usage(req.device_id)
+
+    # 4. Кэш
     key = cache_key(req.query, req.context)
     if key in server_cache:
-        return AiResponse(text=server_cache[key])
+        return AiResponse(text=server_cache[key], used=used, limit=limit)
 
+    # 5. Основной запрос
     system_prompt = (
         "Ты — эксперт-садовод. Отвечай на русском языке, структурированно.\n\n"
         "ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА:\n"
@@ -410,13 +433,13 @@ async def ask(req: AskRequest):
         server_cache.pop(next(iter(server_cache)))
     server_cache[key] = text
 
-    return AiResponse(text=text)
+    return AiResponse(text=text, used=used, limit=limit)
 
 
 @app.post("/api/ask-photo", response_model=AiResponse)
 async def ask_photo(req: AskPhotoRequest):
     """Анализ фото растения через OpenRouter с автоматическим перебором vision-моделей."""
-    check_daily_limit(req.device_id)
+    used, limit = increment_daily_usage(req.device_id)
 
     system_prompt = (
         "Ты — эксперт-садовод и фитопатолог. Твоя задача — анализировать "
@@ -453,5 +476,5 @@ async def ask_photo(req: AskPhotoRequest):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    text = await call_openrouter_vision(messages, max_tokens=2500)
-    return AiResponse(text=text)
+    text, model_id = await call_openrouter_vision(messages, max_tokens=2500)
+    return AiResponse(text=text, used=used, limit=limit, model=model_id)
