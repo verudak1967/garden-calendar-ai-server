@@ -30,6 +30,9 @@ DEEPSEEK_MODEL = "deepseek-flash"
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
+# === Публичный Statuspage платформы Render ===
+RENDER_STATUS_URL = "https://status.render.com/api/v2/status.json"
+
 OPENROUTER_VISION_MODELS = [
     "inclusionai/ling-3.0-flash-vl:free",
     "google/gemma-4-31b-it:free",
@@ -90,6 +93,12 @@ upstream_health: dict = {
         "error": None,
     },
     "openrouter": {
+        "status": "unknown",
+        "latency_ms": None,
+        "checked_at": None,
+        "error": None,
+    },
+    "render": {
         "status": "unknown",
         "latency_ms": None,
         "checked_at": None,
@@ -174,14 +183,73 @@ def _ping_openrouter() -> None:
         print(f"Upstream OpenRouter: exception {e}")
 
 
+def _ping_render() -> None:
+    """
+    Проверяет статус платформы Render через публичный Statuspage API.
+    Не требует ключа. Возвращает:
+    - indicator: "none" (всё ок), "minor", "major", "critical"
+    - description: текст вида "All Systems Operational"
+    """
+    start = time.time()
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(RENDER_STATUS_URL)
+        latency = int((time.time() - start) * 1000)
+        now_iso = datetime.utcnow().isoformat() + "Z"
+
+        if resp.status_code != 200:
+            upstream_health["render"] = {
+                "status": "error",
+                "latency_ms": latency,
+                "checked_at": now_iso,
+                "error": f"Statuspage HTTP {resp.status_code}",
+            }
+            print(f"Upstream Render: Statuspage HTTP {resp.status_code}")
+            return
+
+        data = resp.json()
+        indicator = data.get("status", {}).get("indicator", "unknown")
+        description = data.get("status", {}).get("description", "")
+
+        if indicator == "none":
+            upstream_health["render"] = {
+                "status": "ok",
+                "latency_ms": latency,
+                "checked_at": now_iso,
+                "error": None,
+            }
+            print(f"Upstream Render: OK ({latency}ms) — {description}")
+        else:
+            upstream_health["render"] = {
+                "status": "error",
+                "latency_ms": latency,
+                "checked_at": now_iso,
+                "error": description or f"indicator={indicator}",
+            }
+            print(f"Upstream Render: {indicator} — {description}")
+
+    except Exception as e:
+        now_iso = datetime.utcnow().isoformat() + "Z"
+        upstream_health["render"] = {
+            "status": "error",
+            "latency_ms": None,
+            "checked_at": now_iso,
+            "error": str(e)[:200],
+        }
+        print(f"Upstream Render: exception {e}")
+
+
 def check_upstreams_now() -> None:
-    """Пингует оба upstream в параллельных потоках (быстрее, чем последовательно)."""
+    """Пингует все upstream в параллельных потоках."""
     t1 = threading.Thread(target=_ping_deepseek, daemon=True)
     t2 = threading.Thread(target=_ping_openrouter, daemon=True)
+    t3 = threading.Thread(target=_ping_render, daemon=True)
     t1.start()
     t2.start()
+    t3.start()
     t1.join(timeout=20)
     t2.join(timeout=20)
+    t3.join(timeout=20)
 
 
 def _upstream_loop() -> None:
@@ -711,7 +779,7 @@ def admin_health(
     x_admin_token: Optional[str] = Header(None),
 ):
     """
-    Возвращает статус upstreams (DeepSeek + OpenRouter).
+    Возвращает статус upstreams (DeepSeek + OpenRouter + Render).
     С ?force=true — запускает свежую проверку перед ответом.
     """
     require_admin(x_admin_token)
