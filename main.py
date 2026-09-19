@@ -4,7 +4,6 @@ import time
 import hashlib
 from collections import defaultdict, deque
 from datetime import date, datetime
-from fastapi import Header
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Header
@@ -70,6 +69,16 @@ error_log: deque = deque(maxlen=50)
 
 
 def log_error(source: str, message: str, device_id: str = "unknown"):
+    """Записывает ошибку в ring-buffer и увеличивает счётчик."""
+    metrics["errors_total"] += 1
+    error_log.append({
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "source": source,
+        "message": message[:500],
+        "device_id": device_id,
+    })
+
+
 # ========== АДМИН-ДОСТУП ==========
 
 ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
@@ -84,14 +93,6 @@ def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
         raise HTTPException(status_code=503, detail="Admin access disabled")
     if x_admin_token != ADMIN_TOKEN:
         raise HTTPException(status_code=401, detail="Invalid admin token")
-    """Записывает ошибку в ring-buffer и увеличивает счётчик."""
-    metrics["errors_total"] += 1
-    error_log.append({
-        "ts": datetime.utcnow().isoformat() + "Z",
-        "source": source,
-        "message": message[:500],
-        "device_id": device_id,
-    })
 
 
 # ========== МОДЕЛИ ==========
@@ -544,6 +545,8 @@ async def ask_photo(req: AskPhotoRequest):
     metrics["ask_photo_total"] += 1
     text, model_id = await call_openrouter_vision(messages, max_tokens=2500)
     return AiResponse(text=text, used=used, limit=limit, model=model_id)
+
+
 # ========== АДМИН-ЭНДПОИНТЫ ==========
 
 @app.get("/api/admin/stats")
@@ -557,7 +560,6 @@ def admin_stats(_: None = None, x_admin_token: Optional[str] = Header(None)):
     now = time.time()
     uptime_sec = int(now - SERVER_STARTED_AT)
 
-    # Форматируем статистику моделей для ответа
     model_stats_list = []
     for model_id, stats in vision_model_stats.items():
         last_used_ago = None
@@ -571,7 +573,6 @@ def admin_stats(_: None = None, x_admin_token: Optional[str] = Header(None)):
             "last_error": stats["last_error"],
         })
 
-    # Сортируем: сначала успешные, потом по дате последнего использования
     model_stats_list.sort(
         key=lambda x: (-x["success"], x["last_used_seconds_ago"] or 999999)
     )
@@ -583,7 +584,7 @@ def admin_stats(_: None = None, x_admin_token: Optional[str] = Header(None)):
         "counters": dict(metrics),
         "active_devices_24h": len([d for d, r in daily_usage.items() if r.get("count", 0) > 0]),
         "vision_models": model_stats_list,
-        "recent_errors": list(error_log)[::-1],  # свежие сверху
+        "recent_errors": list(error_log)[::-1],
     }
 
 
