@@ -4,9 +4,10 @@ import time
 import hashlib
 from collections import defaultdict, deque
 from datetime import date, datetime
+from fastapi import Header
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -69,6 +70,20 @@ error_log: deque = deque(maxlen=50)
 
 
 def log_error(source: str, message: str, device_id: str = "unknown"):
+# ========== АДМИН-ДОСТУП ==========
+
+ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
+
+if not ADMIN_TOKEN:
+    print("WARNING: ADMIN_TOKEN not set — /api/admin/* endpoints disabled")
+
+
+def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
+    """Проверяет X-Admin-Token. 401 при неверном или отсутствующем токене."""
+    if not ADMIN_TOKEN:
+        raise HTTPException(status_code=503, detail="Admin access disabled")
+    if x_admin_token != ADMIN_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
     """Записывает ошибку в ring-buffer и увеличивает счётчик."""
     metrics["errors_total"] += 1
     error_log.append({
@@ -529,3 +544,57 @@ async def ask_photo(req: AskPhotoRequest):
     metrics["ask_photo_total"] += 1
     text, model_id = await call_openrouter_vision(messages, max_tokens=2500)
     return AiResponse(text=text, used=used, limit=limit, model=model_id)
+# ========== АДМИН-ЭНДПОИНТЫ ==========
+
+@app.get("/api/admin/stats")
+def admin_stats(_: None = None, x_admin_token: Optional[str] = Header(None)):
+    """
+    Возвращает метрики сервера: uptime, счётчики, статистику моделей, ошибки.
+    Требует заголовок X-Admin-Token.
+    """
+    require_admin(x_admin_token)
+
+    now = time.time()
+    uptime_sec = int(now - SERVER_STARTED_AT)
+
+    # Форматируем статистику моделей для ответа
+    model_stats_list = []
+    for model_id, stats in vision_model_stats.items():
+        last_used_ago = None
+        if stats["last_used_ts"] is not None:
+            last_used_ago = int(now - stats["last_used_ts"])
+        model_stats_list.append({
+            "model": model_id,
+            "success": stats["success"],
+            "fail": stats["fail"],
+            "last_used_seconds_ago": last_used_ago,
+            "last_error": stats["last_error"],
+        })
+
+    # Сортируем: сначала успешные, потом по дате последнего использования
+    model_stats_list.sort(
+        key=lambda x: (-x["success"], x["last_used_seconds_ago"] or 999999)
+    )
+
+    return {
+        "uptime_seconds": uptime_sec,
+        "uptime_human": _format_uptime(uptime_sec),
+        "server_started_at": datetime.utcfromtimestamp(SERVER_STARTED_AT).isoformat() + "Z",
+        "counters": dict(metrics),
+        "active_devices_24h": len([d for d, r in daily_usage.items() if r.get("count", 0) > 0]),
+        "vision_models": model_stats_list,
+        "recent_errors": list(error_log)[::-1],  # свежие сверху
+    }
+
+
+def _format_uptime(seconds: int) -> str:
+    days = seconds // 86400
+    hours = (seconds % 86400) // 3600
+    minutes = (seconds % 3600) // 60
+    parts = []
+    if days > 0:
+        parts.append(f"{days}д")
+    if hours > 0 or days > 0:
+        parts.append(f"{hours}ч")
+    parts.append(f"{minutes}м")
+    return " ".join(parts)
