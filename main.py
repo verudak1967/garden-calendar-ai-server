@@ -1,8 +1,9 @@
 import os
 import re
+import time
 import hashlib
-from collections import defaultdict
-from datetime import date
+from collections import defaultdict, deque
+from datetime import date, datetime
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -45,6 +46,37 @@ if not DEEPSEEK_API_KEY:
     raise RuntimeError("DEEPSEEK_API_KEY environment variable is not set")
 if not OPENROUTER_API_KEY:
     raise RuntimeError("OPENROUTER_API_KEY environment variable is not set")
+
+
+# ========== МЕТРИКИ (мониторинг) ==========
+
+SERVER_STARTED_AT = time.time()
+
+metrics = {
+    "ask_total": 0,
+    "ask_photo_total": 0,
+    "rejected_total": 0,
+    "cache_hits": 0,
+    "errors_total": 0,
+}
+
+vision_model_stats: dict = {
+    m: {"success": 0, "fail": 0, "last_used_ts": None, "last_error": None}
+    for m in OPENROUTER_VISION_MODELS
+}
+
+error_log: deque = deque(maxlen=50)
+
+
+def log_error(source: str, message: str, device_id: str = "unknown"):
+    """Записывает ошибку в ring-buffer и увеличивает счётчик."""
+    metrics["errors_total"] += 1
+    error_log.append({
+        "ts": datetime.utcnow().isoformat() + "Z",
+        "source": source,
+        "message": message[:500],
+        "device_id": device_id,
+    })
 
 
 # ========== МОДЕЛИ ==========
@@ -247,6 +279,7 @@ async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
             json=payload,
         )
     if resp.status_code != 200:
+        log_error("deepseek", f"HTTP {resp.status_code}: {resp.text[:200]}")
         raise HTTPException(
             status_code=502,
             detail=f"DeepSeek error {resp.status_code}: {resp.text}",
@@ -297,25 +330,38 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tupl
                 if data.get("choices") and data["choices"]:
                     content = data["choices"][0]["message"]["content"]
                     print(f"Vision model OK: {model_id}")
+                    vision_model_stats[model_id]["success"] += 1
+                    vision_model_stats[model_id]["last_used_ts"] = time.time()
+                    vision_model_stats[model_id]["last_error"] = None
                     return content, model_id
                 else:
                     print(f"Model {model_id} returned no choices: {data}")
                     last_error = f"{model_id}: no choices"
+                    vision_model_stats[model_id]["fail"] += 1
+                    vision_model_stats[model_id]["last_error"] = "no choices"
                     continue
 
             elif resp.status_code in (404, 402):
                 print(f"Model {model_id} unavailable ({resp.status_code}), trying next...")
                 last_error = f"{model_id}: {resp.status_code}"
+                vision_model_stats[model_id]["fail"] += 1
+                vision_model_stats[model_id]["last_error"] = f"HTTP {resp.status_code}"
                 continue
 
             else:
                 print(f"Model {model_id} error {resp.status_code}: {resp.text}")
                 last_error = f"{model_id}: {resp.status_code} {resp.text[:200]}"
+                vision_model_stats[model_id]["fail"] += 1
+                vision_model_stats[model_id]["last_error"] = f"HTTP {resp.status_code}"
+                log_error("openrouter", f"{model_id}: HTTP {resp.status_code}")
                 continue
 
         except Exception as e:
             print(f"Exception on {model_id}: {e}")
             last_error = f"{model_id}: exception {e}"
+            vision_model_stats[model_id]["fail"] += 1
+            vision_model_stats[model_id]["last_error"] = str(e)[:200]
+            log_error("openrouter", f"{model_id}: exception {e}")
             continue
 
     raise HTTPException(
@@ -373,11 +419,13 @@ async def ask(req: AskRequest):
     # 1. Rule-фильтр (без обращения к AI)
     verdict, reason = rule_filter(req.query)
     if verdict == "deny":
+        metrics["rejected_total"] += 1
         raise HTTPException(status_code=400, detail=reason)
 
     # 2. LLM-классификатор для пограничных случаев
     if verdict == "check":
         if not await classify_topic(req.query):
+            metrics["rejected_total"] += 1
             raise HTTPException(
                 status_code=400,
                 detail="Приложение отвечает только на вопросы о садоводстве и растениях"
@@ -389,6 +437,7 @@ async def ask(req: AskRequest):
     # 4. Кэш
     key = cache_key(req.query, req.context)
     if key in server_cache:
+        metrics["cache_hits"] += 1
         return AiResponse(text=server_cache[key], used=used, limit=limit)
 
     # 5. Основной запрос
@@ -427,6 +476,7 @@ async def ask(req: AskRequest):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
+    metrics["ask_total"] += 1
     text = await call_deepseek(messages, max_tokens=4000)
 
     if len(server_cache) > 1000:
@@ -476,5 +526,6 @@ async def ask_photo(req: AskPhotoRequest):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
+    metrics["ask_photo_total"] += 1
     text, model_id = await call_openrouter_vision(messages, max_tokens=2500)
     return AiResponse(text=text, used=used, limit=limit, model=model_id)
