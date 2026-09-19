@@ -217,7 +217,7 @@ def cache_key(query: str, context: str) -> str:
 
 # ========== DEEPSEEK (текст) ==========
 
-async def call_deepseek(messages: list, max_tokens: int = 2500) -> str:
+async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -229,7 +229,7 @@ async def call_deepseek(messages: list, max_tokens: int = 2500) -> str:
         "temperature": 0.7,
         "max_tokens": max_tokens,
     }
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=90.0) as client:
         resp = await client.post(
             f"{DEEPSEEK_BASE_URL}/chat/completions",
             headers=headers,
@@ -241,7 +241,18 @@ async def call_deepseek(messages: list, max_tokens: int = 2500) -> str:
             detail=f"DeepSeek error {resp.status_code}: {resp.text}",
         )
     data = resp.json()
-    return data["choices"][0]["message"]["content"]
+    choice = data["choices"][0]
+    finish_reason = choice.get("finish_reason", "unknown")
+    usage = data.get("usage", {})
+    print(
+        f"DeepSeek: finish_reason={finish_reason}, "
+        f"prompt_tokens={usage.get('prompt_tokens')}, "
+        f"completion_tokens={usage.get('completion_tokens')}, "
+        f"max_tokens={max_tokens}"
+    )
+    if finish_reason == "length":
+        print(f"WARNING: response truncated by max_tokens! Increase limit.")
+    return choice["message"]["content"]
 
 
 # ========== OPENROUTER (vision) с автоматическим перебором моделей ==========
@@ -393,7 +404,7 @@ async def ask(req: AskRequest):
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": user_content},
     ]
-    text = await call_deepseek(messages, max_tokens=2500)
+    text = await call_deepseek(messages, max_tokens=4000)
 
     if len(server_cache) > 1000:
         server_cache.pop(next(iter(server_cache)))
