@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import threading
 import hashlib
 from collections import defaultdict, deque
 from datetime import date, datetime
@@ -77,6 +78,121 @@ def log_error(source: str, message: str, device_id: str = "unknown"):
         "message": message[:500],
         "device_id": device_id,
     })
+
+
+# ========== ПРОВЕРКА UPSTREAMS ==========
+
+upstream_health: dict = {
+    "deepseek": {
+        "status": "unknown",
+        "latency_ms": None,
+        "checked_at": None,
+        "error": None,
+    },
+    "openrouter": {
+        "status": "unknown",
+        "latency_ms": None,
+        "checked_at": None,
+        "error": None,
+    },
+}
+
+
+def _ping_deepseek() -> None:
+    """Синхронный пинг DeepSeek /models. Записывает результат в upstream_health."""
+    start = time.time()
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(
+                f"{DEEPSEEK_BASE_URL}/models",
+                headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
+            )
+        latency = int((time.time() - start) * 1000)
+        now_iso = datetime.utcnow().isoformat() + "Z"
+        if resp.status_code == 200:
+            upstream_health["deepseek"] = {
+                "status": "ok",
+                "latency_ms": latency,
+                "checked_at": now_iso,
+                "error": None,
+            }
+            print(f"Upstream DeepSeek: OK ({latency}ms)")
+        else:
+            upstream_health["deepseek"] = {
+                "status": "error",
+                "latency_ms": latency,
+                "checked_at": now_iso,
+                "error": f"HTTP {resp.status_code}",
+            }
+            print(f"Upstream DeepSeek: HTTP {resp.status_code}")
+    except Exception as e:
+        now_iso = datetime.utcnow().isoformat() + "Z"
+        upstream_health["deepseek"] = {
+            "status": "error",
+            "latency_ms": None,
+            "checked_at": now_iso,
+            "error": str(e)[:200],
+        }
+        print(f"Upstream DeepSeek: exception {e}")
+
+
+def _ping_openrouter() -> None:
+    """Синхронный пинг OpenRouter /models. Записывает результат в upstream_health."""
+    start = time.time()
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(
+                f"{OPENROUTER_BASE_URL}/models",
+                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
+            )
+        latency = int((time.time() - start) * 1000)
+        now_iso = datetime.utcnow().isoformat() + "Z"
+        if resp.status_code == 200:
+            upstream_health["openrouter"] = {
+                "status": "ok",
+                "latency_ms": latency,
+                "checked_at": now_iso,
+                "error": None,
+            }
+            print(f"Upstream OpenRouter: OK ({latency}ms)")
+        else:
+            upstream_health["openrouter"] = {
+                "status": "error",
+                "latency_ms": latency,
+                "checked_at": now_iso,
+                "error": f"HTTP {resp.status_code}",
+            }
+            print(f"Upstream OpenRouter: HTTP {resp.status_code}")
+    except Exception as e:
+        now_iso = datetime.utcnow().isoformat() + "Z"
+        upstream_health["openrouter"] = {
+            "status": "error",
+            "latency_ms": None,
+            "checked_at": now_iso,
+            "error": str(e)[:200],
+        }
+        print(f"Upstream OpenRouter: exception {e}")
+
+
+def check_upstreams_now() -> None:
+    """Пингует оба upstream в параллельных потоках (быстрее, чем последовательно)."""
+    t1 = threading.Thread(target=_ping_deepseek, daemon=True)
+    t2 = threading.Thread(target=_ping_openrouter, daemon=True)
+    t1.start()
+    t2.start()
+    t1.join(timeout=20)
+    t2.join(timeout=20)
+
+
+def _upstream_loop() -> None:
+    """Фоновый цикл: пингует upstreams раз в 20 минут."""
+    time.sleep(10)   # дать серверу подняться
+    while True:
+        try:
+            check_upstreams_now()
+        except Exception as e:
+            print(f"Upstream loop error: {e}")
+        time.sleep(20 * 60)
 
 
 # ========== АДМИН-ДОСТУП ==========
@@ -583,8 +699,29 @@ def admin_stats(_: None = None, x_admin_token: Optional[str] = Header(None)):
         "server_started_at": datetime.utcfromtimestamp(SERVER_STARTED_AT).isoformat() + "Z",
         "counters": dict(metrics),
         "active_devices_24h": len([d for d, r in daily_usage.items() if r.get("count", 0) > 0]),
+        "upstreams": dict(upstream_health),
         "vision_models": model_stats_list,
         "recent_errors": list(error_log)[::-1],
+    }
+
+
+@app.get("/api/admin/health")
+def admin_health(
+    force: bool = False,
+    x_admin_token: Optional[str] = Header(None),
+):
+    """
+    Возвращает статус upstreams (DeepSeek + OpenRouter).
+    С ?force=true — запускает свежую проверку перед ответом.
+    """
+    require_admin(x_admin_token)
+
+    if force:
+        check_upstreams_now()
+
+    return {
+        "checked_at": datetime.utcnow().isoformat() + "Z",
+        "upstreams": dict(upstream_health),
     }
 
 
@@ -599,3 +736,7 @@ def _format_uptime(seconds: int) -> str:
         parts.append(f"{hours}ч")
     parts.append(f"{minutes}м")
     return " ".join(parts)
+
+
+# Запуск фонового мониторинга upstreams при старте приложения
+threading.Thread(target=_upstream_loop, daemon=True).start()
