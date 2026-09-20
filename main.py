@@ -108,7 +108,6 @@ upstream_health: dict = {
 
 
 def _ping_deepseek() -> None:
-    """Синхронный пинг DeepSeek /models. Записывает результат в upstream_health."""
     start = time.time()
     try:
         with httpx.Client(timeout=15.0) as client:
@@ -119,34 +118,21 @@ def _ping_deepseek() -> None:
         latency = int((time.time() - start) * 1000)
         now_iso = datetime.utcnow().isoformat() + "Z"
         if resp.status_code == 200:
-            upstream_health["deepseek"] = {
-                "status": "ok",
-                "latency_ms": latency,
-                "checked_at": now_iso,
-                "error": None,
-            }
+            upstream_health["deepseek"] = {"status": "ok", "latency_ms": latency,
+                                            "checked_at": now_iso, "error": None}
             print(f"Upstream DeepSeek: OK ({latency}ms)")
         else:
-            upstream_health["deepseek"] = {
-                "status": "error",
-                "latency_ms": latency,
-                "checked_at": now_iso,
-                "error": f"HTTP {resp.status_code}",
-            }
+            upstream_health["deepseek"] = {"status": "error", "latency_ms": latency,
+                                            "checked_at": now_iso, "error": f"HTTP {resp.status_code}"}
             print(f"Upstream DeepSeek: HTTP {resp.status_code}")
     except Exception as e:
         now_iso = datetime.utcnow().isoformat() + "Z"
-        upstream_health["deepseek"] = {
-            "status": "error",
-            "latency_ms": None,
-            "checked_at": now_iso,
-            "error": str(e)[:200],
-        }
+        upstream_health["deepseek"] = {"status": "error", "latency_ms": None,
+                                        "checked_at": now_iso, "error": str(e)[:200]}
         print(f"Upstream DeepSeek: exception {e}")
 
 
 def _ping_openrouter() -> None:
-    """Синхронный пинг OpenRouter /models. Записывает результат в upstream_health."""
     start = time.time()
     try:
         with httpx.Client(timeout=15.0) as client:
@@ -157,104 +143,60 @@ def _ping_openrouter() -> None:
         latency = int((time.time() - start) * 1000)
         now_iso = datetime.utcnow().isoformat() + "Z"
         if resp.status_code == 200:
-            upstream_health["openrouter"] = {
-                "status": "ok",
-                "latency_ms": latency,
-                "checked_at": now_iso,
-                "error": None,
-            }
+            upstream_health["openrouter"] = {"status": "ok", "latency_ms": latency,
+                                              "checked_at": now_iso, "error": None}
             print(f"Upstream OpenRouter: OK ({latency}ms)")
         else:
-            upstream_health["openrouter"] = {
-                "status": "error",
-                "latency_ms": latency,
-                "checked_at": now_iso,
-                "error": f"HTTP {resp.status_code}",
-            }
+            upstream_health["openrouter"] = {"status": "error", "latency_ms": latency,
+                                              "checked_at": now_iso, "error": f"HTTP {resp.status_code}"}
             print(f"Upstream OpenRouter: HTTP {resp.status_code}")
     except Exception as e:
         now_iso = datetime.utcnow().isoformat() + "Z"
-        upstream_health["openrouter"] = {
-            "status": "error",
-            "latency_ms": None,
-            "checked_at": now_iso,
-            "error": str(e)[:200],
-        }
+        upstream_health["openrouter"] = {"status": "error", "latency_ms": None,
+                                          "checked_at": now_iso, "error": str(e)[:200]}
         print(f"Upstream OpenRouter: exception {e}")
 
 
 def _ping_render() -> None:
-    """
-    Проверяет статус платформы Render через публичный Statuspage API.
-    Не требует ключа. Возвращает:
-    - indicator: "none" (всё ок), "minor", "major", "critical"
-    - description: текст вида "All Systems Operational"
-    """
     start = time.time()
     try:
         with httpx.Client(timeout=15.0) as client:
             resp = client.get(RENDER_STATUS_URL)
         latency = int((time.time() - start) * 1000)
         now_iso = datetime.utcnow().isoformat() + "Z"
-
         if resp.status_code != 200:
-            upstream_health["render"] = {
-                "status": "error",
-                "latency_ms": latency,
-                "checked_at": now_iso,
-                "error": f"Statuspage HTTP {resp.status_code}",
-            }
+            upstream_health["render"] = {"status": "error", "latency_ms": latency,
+                                          "checked_at": now_iso, "error": f"Statuspage HTTP {resp.status_code}"}
             print(f"Upstream Render: Statuspage HTTP {resp.status_code}")
             return
-
         data = resp.json()
         indicator = data.get("status", {}).get("indicator", "unknown")
         description = data.get("status", {}).get("description", "")
-
         if indicator == "none":
-            upstream_health["render"] = {
-                "status": "ok",
-                "latency_ms": latency,
-                "checked_at": now_iso,
-                "error": None,
-            }
+            upstream_health["render"] = {"status": "ok", "latency_ms": latency,
+                                          "checked_at": now_iso, "error": None}
             print(f"Upstream Render: OK ({latency}ms) — {description}")
         else:
-            upstream_health["render"] = {
-                "status": "error",
-                "latency_ms": latency,
-                "checked_at": now_iso,
-                "error": description or f"indicator={indicator}",
-            }
+            upstream_health["render"] = {"status": "error", "latency_ms": latency,
+                                          "checked_at": now_iso, "error": description or f"indicator={indicator}"}
             print(f"Upstream Render: {indicator} — {description}")
-
     except Exception as e:
         now_iso = datetime.utcnow().isoformat() + "Z"
-        upstream_health["render"] = {
-            "status": "error",
-            "latency_ms": None,
-            "checked_at": now_iso,
-            "error": str(e)[:200],
-        }
+        upstream_health["render"] = {"status": "error", "latency_ms": None,
+                                      "checked_at": now_iso, "error": str(e)[:200]}
         print(f"Upstream Render: exception {e}")
 
 
 def check_upstreams_now() -> None:
-    """Пингует все upstream в параллельных потоках."""
     t1 = threading.Thread(target=_ping_deepseek, daemon=True)
     t2 = threading.Thread(target=_ping_openrouter, daemon=True)
     t3 = threading.Thread(target=_ping_render, daemon=True)
-    t1.start()
-    t2.start()
-    t3.start()
-    t1.join(timeout=20)
-    t2.join(timeout=20)
-    t3.join(timeout=20)
+    t1.start(); t2.start(); t3.start()
+    t1.join(timeout=20); t2.join(timeout=20); t3.join(timeout=20)
 
 
 def _upstream_loop() -> None:
-    """Фоновый цикл: пингует upstreams раз в 20 минут."""
-    time.sleep(10)   # дать серверу подняться
+    time.sleep(10)
     while True:
         try:
             check_upstreams_now()
@@ -272,7 +214,6 @@ if not ADMIN_TOKEN:
 
 
 def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
-    """Проверяет X-Admin-Token. 401 при неверном или отсутствующем токене."""
     if not ADMIN_TOKEN:
         raise HTTPException(status_code=503, detail="Admin access disabled")
     if x_admin_token != ADMIN_TOKEN:
@@ -285,6 +226,7 @@ class AskRequest(BaseModel):
     query: str
     context: Optional[str] = ""
     device_id: Optional[str] = "unknown"
+    request_type: Optional[str] = "free"   # "care" | "pests" | "diseases" | "free"
 
 
 class AskPhotoRequest(BaseModel):
@@ -428,7 +370,6 @@ FREE_DAILY_LIMIT = 30
 
 
 def get_daily_usage(device_id: str) -> tuple[int, int]:
-    """Возвращает (used, limit) БЕЗ инкремента."""
     today = date.today().isoformat()
     rec = daily_usage[device_id]
     if rec["date"] != today:
@@ -438,7 +379,6 @@ def get_daily_usage(device_id: str) -> tuple[int, int]:
 
 
 def increment_daily_usage(device_id: str) -> tuple[int, int]:
-    """Инкрементирует счётчик и возвращает (used, limit). 429, если превышен."""
     used, limit = get_daily_usage(device_id)
     if used >= limit:
         raise HTTPException(
@@ -491,7 +431,8 @@ async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
     print(
         f"DeepSeek: finish_reason={finish_reason}, "
         f"prompt_tokens={usage.get('prompt_tokens')}, "
-        f"completion_tokens={usage.get('completion_tokens')}"
+        f"completion_tokens={usage.get('completion_tokens')}, "
+        f"max_tokens={max_tokens}"
     )
     if finish_reason == "length":
         print("WARNING: response truncated by max_tokens!")
@@ -501,7 +442,6 @@ async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
 # ========== OPENROUTER (vision) с автоматическим перебором моделей ==========
 
 async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tuple[str, str]:
-    """Возвращает (text, model_id) — текст ответа и id модели, которая сработала."""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
@@ -583,11 +523,6 @@ async def classify_topic(query: str) -> bool:
         "Отвечай NO только если запрос явно не по теме (программирование, "
         "погода, политика, стихи, анекдоты, медицина человека, рецепты еды, "
         "финансы, отношения).\n\n"
-        "Примеры YES: «уход за голубикой», «как поливать томаты», "
-        "«борная кислота для смородины», «мои кусты желтеют», "
-        "«чем подкормить яблоню», «рассада вытянулась».\n"
-        "Примеры NO: «напиши код на Python», «погода на завтра», "
-        "«что приготовить на ужин», «как похудеть».\n\n"
         "Ответь ОДНИМ словом: YES или NO.\n\n"
         f"Запрос: {query}"
     )
@@ -600,6 +535,80 @@ async def classify_topic(query: str) -> bool:
         return True
 
 
+# ========== СБОРКА ПРОМПТА ДЛЯ /api/ask ==========
+
+def build_system_prompt(request_type: str) -> tuple[str, int]:
+    """
+    Возвращает (system_prompt, max_tokens) в зависимости от типа запроса.
+    - care / pests / diseases: 2000 символов, max_tokens=3000
+    - free (справочник): 3000 символов, max_tokens=4000
+    """
+    is_culture_request = request_type in ("care", "pests", "diseases")
+
+    if is_culture_request:
+        length_limit = "не более 2000 символов (примерно 1000–1200 слов)"
+        max_tokens = 3000
+        if request_type == "care":
+            structure_hint = (
+                "Обязательные разделы (выбери 4–6, самые важные для этой культуры):\n"
+                "- `## Полив`\n"
+                "- `## Подкормка`\n"
+                "- `## Обрезка`\n"
+                "- `## Мульчирование`\n"
+                "- `## Подготовка к зиме`\n"
+                "- `## Перспективные сорта` — 2–3 новых перспективных сорта этой культуры "
+                "с кратким описанием (1 строка на сорт)."
+            )
+        elif request_type == "pests":
+            structure_hint = (
+                "Обязательные разделы:\n"
+                "- `## Основные вредители` — 3–5 вредителей с признаками поражения.\n"
+                "- `## Препараты` — конкретные названия и дозировки.\n"
+                "- `## Профилактика` — что делать для предотвращения.\n"
+                "- `## Устойчивые сорта` — 2–3 сорта этой культуры, устойчивых к вредителям."
+            )
+        else:  # diseases
+            structure_hint = (
+                "Обязательные разделы:\n"
+                "- `## Основные болезни` — 3–5 болезней с признаками.\n"
+                "- `## Препараты` — конкретные названия и дозировки.\n"
+                "- `## Профилактика` — что делать для предотвращения.\n"
+                "- `## Устойчивые сорта` — 2–3 сорта этой культуры, устойчивых к болезням."
+            )
+    else:
+        length_limit = "не более 3000 символов (примерно 1500–1800 слов)"
+        max_tokens = 4000
+        structure_hint = (
+            "Раскрой 5–7 ключевых разделов по теме. НЕ пиши статью.\n"
+            "Если запрос про конкретное растение — добавь раздел "
+            "`## Перспективные сорта` с 2–3 новыми перспективными сортами "
+            "(1 строка на сорт с кратким описанием).\n"
+            "Если запрос общий (не про конкретное растение) — этот раздел пропусти."
+        )
+
+    system_prompt = (
+        f"Ты — эксперт-садовод. Отвечай на русском языке, структурированно, но КРАТКО.\n\n"
+        f"ЖЁСТКОЕ ОГРАНИЧЕНИЕ: ответ {length_limit}. "
+        f"Лучше коротко и по делу, чем подробно и обрезанно.\n\n"
+        f"{structure_hint}\n\n"
+        "ФОРМАТ ОТВЕТА (обязательно):\n"
+        "1. Каждый смысловой раздел начинай с markdown-заголовка второго уровня — "
+        "два символа решётки и пробел: `## Название раздела`.\n"
+        "   ПРАВИЛЬНО: `## Полив`, `## Подкормка`, `## Перспективные сорта`.\n"
+        "   НЕПРАВИЛЬНО: `**Полив**`, `**Подкормка**`, `1. Полив`.\n"
+        "2. Внутри каждого раздела — маркированный список через `- ` или "
+        "нумерованный через `1. `.\n"
+        "3. Жирным (`**термин**`) выделяй ТОЛЬКО названия препаратов и "
+        "ключевые термины ВНУТРИ текста, а не заголовки.\n"
+        "4. НЕ повторяй вопрос, не пиши вступление и заключение — сразу к делу.\n\n"
+        "Тема: садоводство, огородничество, комнатные растения, болезни растений, "
+        "вредители, удобрения, обрезка, полив, урожай.\n"
+        "ВАЖНО: если вопрос хотя бы частично не по теме — вежливо откажись."
+    )
+
+    return system_prompt, max_tokens
+
+
 # ========== ЭНДПОИНТЫ ==========
 
 @app.get("/")
@@ -609,7 +618,6 @@ def health():
 
 @app.get("/api/usage", response_model=UsageResponse)
 def get_usage(device_id: str = "unknown"):
-    """Возвращает текущее использование дневного лимита для устройства."""
     used, limit = get_daily_usage(device_id)
     return UsageResponse(used=used, limit=limit)
 
@@ -640,34 +648,9 @@ async def ask(req: AskRequest):
         metrics["cache_hits"] += 1
         return AiResponse(text=server_cache[key], used=used, limit=limit)
 
-    # 5. Основной запрос
-    system_prompt = (
-        "Ты — эксперт-садовод. Отвечай на русском языке, структурированно.\n\n"
-        "ОБЯЗАТЕЛЬНЫЙ ФОРМАТ ОТВЕТА:\n"
-        "1. Каждый смысловой раздел начинай с markdown-заголовка второго уровня — "
-        "два символа решётки и пробел: `## Название раздела`.\n"
-        "   ПРАВИЛЬНО: `## Химия`, `## Народные средства`, `## Профилактика`.\n"
-        "   НЕПРАВИЛЬНО: `**Химия**`, `**Народные средства**`, `4. Химия` — "
-        "жирный для заголовков НЕ ИСПОЛЬЗУЙ.\n"
-        "2. Внутри каждого раздела — маркированный список через `- ` или "
-        "нумерованный через `1. `.\n"
-        "3. Жирным (`**термин**`) выделяй ТОЛЬКО названия препаратов и "
-        "ключевые термины ВНУТРИ текста, а не заголовки разделов.\n\n"
-        "ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА:\n"
-        "```\n"
-        "## Народные средства\n"
-        "- Чеснок: настой 200 г на 10 л воды\n"
-        "- Табак: 300 г на 10 л воды\n\n"
-        "## Химия\n"
-        "1. **Актара** — 4 г на 10 л воды\n"
-        "2. **Фитоверм** — 4 мл на 1 л воды\n\n"
-        "## Профилактика\n"
-        "- Осенняя перекопка приствольного круга\n"
-        "```\n\n"
-        "Тема: садоводство, огородничество, комнатные растения, болезни растений, "
-        "вредители, удобрения, обрезка, полив, урожай.\n"
-        "ВАЖНО: если вопрос хотя бы частично не по теме — вежливо откажись."
-    )
+    # 5. Формируем промпт в зависимости от типа запроса
+    system_prompt, max_tokens_for_request = build_system_prompt(req.request_type or "free")
+
     user_content = req.query
     if req.context:
         user_content = f"Контекст (растение/тема): {req.context}\n\nВопрос: {req.query}"
@@ -677,7 +660,7 @@ async def ask(req: AskRequest):
         {"role": "user", "content": user_content},
     ]
     metrics["ask_total"] += 1
-    text = await call_deepseek(messages, max_tokens=4000)
+    text = await call_deepseek(messages, max_tokens=max_tokens_for_request)
 
     if len(server_cache) > 1000:
         server_cache.pop(next(iter(server_cache)))
@@ -705,7 +688,7 @@ async def ask_photo(req: AskPhotoRequest):
         "2) какие проблемы видны (болезнь, вредитель, дефицит питания, "
         "механические повреждения);\n"
         "3) что делать — конкретные шаги и препараты.\n\n"
-        "Отвечай на русском языке, структурированно, кратко.\n\n"
+        "Отвечай на русском языке, структурированно, кратко (не более 2000 символов).\n\n"
         "ФОРМАТ ОТВЕТА (обязательно):\n"
         "- Разделы обозначай через `## Название раздела`.\n"
         "- Внутри разделов — маркированные или нумерованные списки.\n"
@@ -735,10 +718,6 @@ async def ask_photo(req: AskPhotoRequest):
 
 @app.get("/api/admin/stats")
 def admin_stats(_: None = None, x_admin_token: Optional[str] = Header(None)):
-    """
-    Возвращает метрики сервера: uptime, счётчики, статистику моделей, ошибки.
-    Требует заголовок X-Admin-Token.
-    """
     require_admin(x_admin_token)
 
     now = time.time()
@@ -778,15 +757,9 @@ def admin_health(
     force: bool = False,
     x_admin_token: Optional[str] = Header(None),
 ):
-    """
-    Возвращает статус upstreams (DeepSeek + OpenRouter + Render).
-    С ?force=true — запускает свежую проверку перед ответом.
-    """
     require_admin(x_admin_token)
-
     if force:
         check_upstreams_now()
-
     return {
         "checked_at": datetime.utcnow().isoformat() + "Z",
         "upstreams": dict(upstream_health),
