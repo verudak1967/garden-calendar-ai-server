@@ -4,7 +4,7 @@ import time
 import threading
 import hashlib
 from collections import defaultdict, deque
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Header
@@ -227,12 +227,14 @@ class AskRequest(BaseModel):
     context: Optional[str] = ""
     device_id: Optional[str] = "unknown"
     request_type: Optional[str] = "free"   # "care" | "pests" | "diseases" | "free"
+    timezone_offset_minutes: Optional[int] = 0   # смещение от UTC в минутах (Москва = +180)
 
 
 class AskPhotoRequest(BaseModel):
     image_base64: str
     context: Optional[str] = ""
     device_id: Optional[str] = "unknown"
+    timezone_offset_minutes: Optional[int] = 0
 
 
 class AiResponse(BaseModel):
@@ -365,21 +367,35 @@ def rule_filter(query: str) -> tuple[str, str]:
 
 # ========== ЛИМИТЫ ==========
 
-daily_usage: dict = defaultdict(lambda: {"date": None, "count": 0})
+daily_usage: dict = defaultdict(lambda: {"local_date": None, "count": 0})
 FREE_DAILY_LIMIT = 30
 
 
-def get_daily_usage(device_id: str) -> tuple[int, int]:
-    today = date.today().isoformat()
+def _local_date_for_offset(offset_minutes: int) -> str:
+    """
+    Возвращает текущую дату YYYY-MM-DD для пользователя с заданным смещением UTC.
+    Например, для Москвы (offset = +180) в 23:30 UTC → уже следующий день.
+    """
+    try:
+        tz = timezone(timedelta(minutes=offset_minutes))
+    except Exception:
+        tz = timezone.utc
+    return datetime.now(tz).date().isoformat()
+
+
+def get_daily_usage(device_id: str, tz_offset_minutes: int = 0) -> tuple[int, int]:
+    """Возвращает (used, limit) БЕЗ инкремента. Сброс по локальной дате пользователя."""
+    today_local = _local_date_for_offset(tz_offset_minutes)
     rec = daily_usage[device_id]
-    if rec["date"] != today:
-        rec["date"] = today
+    if rec["local_date"] != today_local:
+        rec["local_date"] = today_local
         rec["count"] = 0
     return rec["count"], FREE_DAILY_LIMIT
 
 
-def increment_daily_usage(device_id: str) -> tuple[int, int]:
-    used, limit = get_daily_usage(device_id)
+def increment_daily_usage(device_id: str, tz_offset_minutes: int = 0) -> tuple[int, int]:
+    """Инкрементирует счётчик. 429, если превышен."""
+    used, limit = get_daily_usage(device_id, tz_offset_minutes)
     if used >= limit:
         raise HTTPException(
             status_code=429,
@@ -617,8 +633,11 @@ def health():
 
 
 @app.get("/api/usage", response_model=UsageResponse)
-def get_usage(device_id: str = "unknown"):
-    used, limit = get_daily_usage(device_id)
+def get_usage(
+    device_id: str = "unknown",
+    timezone_offset_minutes: int = 0,
+):
+    used, limit = get_daily_usage(device_id, timezone_offset_minutes)
     return UsageResponse(used=used, limit=limit)
 
 
@@ -640,7 +659,8 @@ async def ask(req: AskRequest):
             )
 
     # 3. Инкремент счётчика только после успешных фильтров
-    used, limit = increment_daily_usage(req.device_id)
+    tz_offset = req.timezone_offset_minutes or 0
+    used, limit = increment_daily_usage(req.device_id, tz_offset)
 
     # 4. Кэш
     key = cache_key(req.query, req.context)
@@ -672,7 +692,8 @@ async def ask(req: AskRequest):
 @app.post("/api/ask-photo", response_model=AiResponse)
 async def ask_photo(req: AskPhotoRequest):
     """Анализ фото растения через OpenRouter с автоматическим перебором vision-моделей."""
-    used, limit = increment_daily_usage(req.device_id)
+    tz_offset = req.timezone_offset_minutes or 0
+    used, limit = increment_daily_usage(req.device_id, tz_offset)
 
     system_prompt = (
         "Ты — эксперт-садовод и фитопатолог. Твоя задача — анализировать "
