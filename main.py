@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import time
 import threading
 import hashlib
@@ -10,7 +11,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 
 app = FastAPI(title="Garden Calendar AI Server")
 
@@ -81,6 +82,11 @@ def log_error(source: str, message: str, device_id: str = "unknown"):
         "message": message[:500],
         "device_id": device_id,
     })
+
+# ========== КЭШ ПЛАНОВ (generate-plan) ==========
+
+PLAN_CACHE_TTL_SECONDS = 90 * 24 * 60 * 60   # 90 дней
+plan_cache: dict = {}   # ключ → {"cached_at": ts, "tasks": [...]}
 
 
 # ========== ПРОВЕРКА UPSTREAMS ==========
@@ -248,6 +254,27 @@ class UsageResponse(BaseModel):
     used: int
     limit: int
 
+
+class PlanRequest(BaseModel):
+    culture_name: str
+    variety: Optional[str] = ""
+    region_zone: Optional[int] = 5           # USDA-зона 1-9
+    phase: str                                # "P0"..."P9"
+    device_id: Optional[str] = "unknown"
+    timezone_offset_minutes: Optional[int] = 0
+
+
+class PlanTask(BaseModel):
+    title: str
+    description: str
+    month: int      # 1-12
+    day: int        # 1-31
+
+
+class PlanResponse(BaseModel):
+    tasks: List[PlanTask]
+    from_cache: bool = False
+    detected_lifecycle: Optional[str] = None   # "annual" | "perennial" | "indoor"
 
 # ========== СТОП-СЛОВА ==========
 
@@ -455,6 +482,106 @@ async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
     return choice["message"]["content"]
 
 
+# ========== DEEPSEEK С JSON (для generate-plan) ==========
+
+async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: int = 3500) -> dict:
+    """
+    Вызывает DeepSeek и парсит ответ как JSON.
+    Если ответ обёрнут в ```json ... ``` или содержит мусор — извлекает JSON.
+    Возвращает словарь. При ошибке бросает HTTPException 502.
+    """
+    headers = {
+        "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "stream": False,
+        "temperature": 0.4,   # ниже температура — стабильнее JSON
+        "max_tokens": max_tokens,
+        "response_format": {"type": "json_object"},   # DeepSeek поддерживает JSON-режим
+    }
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        resp = await client.post(
+            f"{DEEPSEEK_BASE_URL}/chat/completions",
+            headers=headers,
+            json=payload,
+        )
+    if resp.status_code != 200:
+        log_error("deepseek-plan", f"HTTP {resp.status_code}: {resp.text[:200]}")
+        raise HTTPException(
+            status_code=502,
+            detail=f"DeepSeek error {resp.status_code}: {resp.text[:200]}",
+        )
+    data = resp.json()
+    content = data["choices"][0]["message"]["content"]
+
+    # Чистим возможные обёртки ```json ... ```
+    cleaned = content.strip()
+    if cleaned.startswith("```"):
+        # удаляем первую строку (```json) и последнюю (```)
+        lines = cleaned.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+
+    try:
+        parsed = json.loads(cleaned)
+    except Exception as e:
+        log_error("deepseek-plan", f"JSON parse error: {e}. Content: {cleaned[:300]}")
+        raise HTTPException(
+            status_code=502,
+            detail="AI вернул невалидный JSON. Попробуйте ещё раз.",
+        )
+    return parsed
+
+
+def validate_plan_json(parsed: dict) -> List[dict]:
+    """
+    Валидирует JSON плана. Возвращает список задач или бросает HTTPException.
+    """
+    if not isinstance(parsed, dict) or "tasks" not in parsed:
+        raise HTTPException(status_code=502, detail="AI вернул JSON без поля 'tasks'")
+    tasks = parsed["tasks"]
+    if not isinstance(tasks, list) or not tasks:
+        raise HTTPException(status_code=502, detail="AI вернул пустой список задач")
+    if len(tasks) > 40:
+        # обрезаем до 40 (слишком много — не нужно)
+        tasks = tasks[:40]
+
+    result = []
+    seen_titles = set()
+    for t in tasks:
+        if not isinstance(t, dict):
+            continue
+        title = str(t.get("title", "")).strip()
+        description = str(t.get("description", "")).strip()
+        try:
+            month = int(t.get("month", 0))
+            day = int(t.get("day", 0))
+        except (ValueError, TypeError):
+            continue
+        if not title or month < 1 or month > 12 or day < 1 or day > 28:
+            continue
+        if title.lower() in seen_titles:
+            continue
+        seen_titles.add(title.lower())
+        result.append({
+            "title": title[:60],
+            "description": description[:150],
+            "month": month,
+            "day": day,
+        })
+    if not result:
+        raise HTTPException(status_code=502, detail="AI вернул невалидный план")
+    return result
+
 # ========== OPENROUTER (vision) с автоматическим перебором моделей ==========
 
 async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tuple[str, str]:
@@ -620,6 +747,64 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
         "Тема: садоводство, огородничество, комнатные растения, болезни растений, "
         "вредители, удобрения, обрезка, полив, урожай.\n"
         "ВАЖНО: если вопрос хотя бы частично не по теме — вежливо откажись."
+    )
+
+
+# ========== ПРОМПТ ДЛЯ ГЕНЕРАЦИИ ПЛАНА ЗАДАЧ ==========
+
+def build_plan_prompt() -> str:
+    """
+    Возвращает system_prompt для генерации годового плана задач.
+    Включает полную таблицу УФВ (универсальных фаз вегетации).
+    """
+    return (
+        "Ты — эксперт-садовод. Составь годовой план ухода за растением в виде задач.\n\n"
+        "ОТВЕЧАЙ СТРОГО В ФОРМАТЕ JSON, БЕЗ Markdown, БЕЗ пояснений. "
+        "Формат ответа:\n"
+        '{\n'
+        '  "detected_lifecycle": "annual" | "perennial" | "indoor",\n'
+        '  "tasks": [\n'
+        '    {"title": "Название задачи", "description": "Краткое описание с дозировкой", "month": 4, "day": 15},\n'
+        '    ...\n'
+        '  ]\n'
+        '}\n\n'
+        "ТРЕБОВАНИЯ К ЗАДАЧАМ:\n"
+        "- От 12 до 25 задач на год.\n"
+        "- Поля title и description — на русском, кратко (title до 60 символов, description до 150).\n"
+        "- month: 1-12, day: 1-28 (не используй 29-31, чтобы избежать проблем с датами).\n"
+        "- Задачи должны идти в хронологическом порядке (по возрастанию месяца).\n"
+        "- НЕ повторяйся — одна задача не должна встречаться дважды.\n"
+        "- Даты указывай примерные для СРЕДНЕЙ полосы, клиент сам сдвинет под регион.\n\n"
+        "ОПРЕДЕЛИ ТИП РАСТЕНИЯ САМ по названию:\n"
+        "- detected_lifecycle = \"annual\" для однолетников (томат, огурец, морковь, укроп, картофель).\n"
+        "- detected_lifecycle = \"perennial\" для многолетников (яблоня, смородина, роза, хоста).\n"
+        "- detected_lifecycle = \"indoor\" для комнатных (фикус, орхидея, сансевиерия).\n\n"
+        "ТИП ЖИЗНЕННОГО ЦИКЛА ВЛИЯЕТ НА ПЛАН:\n"
+        "- Для annual: план от текущей фазы до конца сезона (уборка урожая, осенняя подготовка).\n"
+        "- Для perennial: полный годовой круг — весна, лето, осень, зима. "
+        "Обязательно включи зимние задачи (снегозадержание, защита от грызунов, побелка).\n"
+        "- Для indoor: уход в течение года — полив, подкормка, пересадка, "
+        "борьба с вредителями. Без сезонных фаз за пределами дома.\n\n"
+        "ОБЯЗАТЕЛЬНЫЕ ЗАДАЧИ ПО ФАЗАМ (используй таблицу УФВ):\n"
+        "P0 — Покой / семя / покоящаяся почка: минимум полива, прохлада, не тревожить.\n"
+        "P1 — Активация / прорастание / пробуждение: влага, тепло, свет, досветка рассады.\n"
+        "P2 — Вегетативный рост: азотные подкормки, полив, формировка.\n"
+        "P3 — Закладка репродуктивных органов / бутонизация: фосфор-калий, защита от заморозков.\n"
+        "P4 — Цветение: опылители, умеренный полив, не опрыскивать пестицидами.\n"
+        "P5 — Опыление / завязывание: калий, бор, защита от вредителей.\n"
+        "P6 — Рост плодов и семян: регулярный полив, калий, нормировка урожая.\n"
+        "P7 — Созревание: сбор урожая, снижение полива.\n"
+        "P8 — Завершение цикла: уборка растительных остатков, листопад.\n"
+        "P9 — Переход в покой: закалка, влагозарядный полив, побелка, укрытие.\n\n"
+        "ПРАВИЛА ФОРМИРОВАНИЯ ПЛАНА ОТ ТЕКУЩЕЙ ФАЗЫ:\n"
+        "Пользователь сообщит текущую фазу растения. Построй план ОТ НЕЁ и ДО КОНЦА ГОДА, "
+        "включая задачи для следующих фаз по кругу (для многолетников — до той же фазы через год).\n"
+        "НЕ включай задачи для фаз, которые уже прошли (если только они не повторяются в следующем году).\n\n"
+        "ЗАПРЕЩЕНО:\n"
+        "- Возвращать текст в Markdown, добавлять ```json```.\n"
+        "- Возвращать текст до или после JSON.\n"
+        "- Писать комментарии в JSON.\n"
+        "- Использовать поля, отличные от title, description, month, day.\n"
     )
 
     return system_prompt, max_tokens
@@ -799,6 +984,76 @@ def _format_uptime(seconds: int) -> str:
     parts.append(f"{minutes}м")
     return " ".join(parts)
 
+
+# ========== ЭНДПОИНТ: ГЕНЕРАЦИЯ ПЛАНА ЗАДАЧ ==========
+
+@app.post("/api/generate-plan", response_model=PlanResponse)
+async def generate_plan(req: PlanRequest):
+    """
+    Генерирует план задач для культуры на основе:
+    - названия и сорта
+    - региона (USDA-зоны)
+    - текущей фазы вегетации (УФВ)
+    - текущей даты
+
+    Кэширует на 90 дней по ключу culture|variety|zone|phase.
+    """
+    # 1. Формируем ключ кэша
+    cache_key_str = f"{req.culture_name.lower()}|{(req.variety or '').lower()}|{req.region_zone}|{req.phase}"
+
+    # 2. Проверяем кэш
+    now_ts = time.time()
+    cached = plan_cache.get(cache_key_str)
+    if cached and (now_ts - cached["cached_at"]) < PLAN_CACHE_TTL_SECONDS:
+        print(f"Plan cache HIT: {cache_key_str}")
+        return PlanResponse(
+            tasks=[PlanTask(**t) for t in cached["tasks"]],
+            from_cache=True,
+            detected_lifecycle=cached.get("lifecycle"),
+        )
+
+    # 3. Считаем локальную дату пользователя
+    tz_offset = req.timezone_offset_minutes or 0
+    local_date = _local_date_for_offset(tz_offset)
+
+    # 4. Формируем user-промпт
+    variety_str = req.variety.strip() if req.variety else "не указан"
+    user_prompt = (
+        f"Культура: {req.culture_name}\n"
+        f"Сорт: {variety_str}\n"
+        f"Климатическая зона USDA: {req.region_zone}\n"
+        f"Текущая фаза вегетации (УФВ): {req.phase}\n"
+        f"Сегодняшняя дата: {local_date}\n\n"
+        "Составь план задач от текущей фазы до конца сезона (для однолетников) "
+        "или на полный годовой цикл (для многолетников). "
+        "Ответь строго в формате JSON."
+    )
+
+    # 5. Запрос к DeepSeek
+    system_prompt = build_plan_prompt()
+    parsed = await call_deepseek_json(system_prompt, user_prompt, max_tokens=3500)
+    tasks = validate_plan_json(parsed)
+    lifecycle = parsed.get("detected_lifecycle", "")
+
+    # 6. Сохраняем в кэш
+    plan_cache[cache_key_str] = {
+        "cached_at": now_ts,
+        "tasks": tasks,
+        "lifecycle": lifecycle,
+    }
+    # Ограничиваем размер кэша
+    if len(plan_cache) > 500:
+        oldest_key = min(plan_cache, key=lambda k: plan_cache[k]["cached_at"])
+        plan_cache.pop(oldest_key, None)
+
+    metrics["ask_total"] += 1   # учитываем как запрос
+    print(f"Plan generated for {req.culture_name}, {len(tasks)} tasks, lifecycle={lifecycle}")
+
+    return PlanResponse(
+        tasks=[PlanTask(**t) for t in tasks],
+        from_cache=False,
+        detected_lifecycle=lifecycle,
+    )
 
 # Запуск фонового мониторинга upstreams при старте приложения
 threading.Thread(target=_upstream_loop, daemon=True).start()
