@@ -8,7 +8,7 @@ from collections import defaultdict, deque
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, Header
+from fastapi import FastAPI, HTTPException, Request, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List
@@ -64,33 +64,17 @@ def decode_json_response(resp) -> dict:
         return resp.json()
 
 
-def _fix_mojibake(s: str) -> str:
+def _json_utf8_response(data: dict) -> Response:
     """
-    Исправляет мохибейк: 'РЎРЅРµРі' → 'Снег'.
-    Срабатывает ТОЛЬКО если строка действительно похожа на мохибейк.
-    Иначе возвращает исходную — чтобы не портить корректный русский.
+    Отдаёт JSON-ответ с явным UTF-8, обходя Pydantic-сериализацию.
+    Решает проблему двойного перекодирования (UTF-8 → CP1251 → UTF-8).
     """
-    if not s:
-        return s
-
-    # Признак мохибейка: символ 'Р' (U+0420) или 'С' (U+0421) перед
-    # специфичными кириллическими/латинскими символами.
-    # В нормальном русском такого паттерна нет.
-    mojibake_score = 0
-    for i in range(len(s) - 1):
-        c = ord(s[i])
-        nc = ord(s[i + 1])
-        if c in (0x0420, 0x0421) and (
-            0x0400 <= nc < 0x0420 or 0x00A0 <= nc <= 0x00FF
-        ):
-            mojibake_score += 1
-
-    if mojibake_score >= 2:
-        try:
-            return s.encode("cp1251").decode("utf-8")
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            return s
-    return s
+    body_bytes = json.dumps(data, ensure_ascii=False).encode("utf-8")
+    return Response(
+        content=body_bytes,
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
 
 
 # ========== МЕТРИКИ ==========
@@ -500,7 +484,7 @@ async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
     )
     if finish_reason == "length":
         print("WARNING: response truncated by max_tokens!")
-    return _fix_mojibake(choice["message"]["content"])
+    return choice["message"]["content"]
 
 
 # ========== DEEPSEEK С JSON (для generate-plan) ==========
@@ -617,8 +601,8 @@ def validate_plan_json(parsed: dict) -> List[dict]:
     for t in tasks:
         if not isinstance(t, dict):
             continue
-        title = _fix_mojibake(str(t.get("title", "")).strip())
-        description = _fix_mojibake(str(t.get("description", "")).strip())
+        title = str(t.get("title", "")).strip()
+        description = str(t.get("description", "")).strip()
         try:
             month = int(t.get("month", 0))
             day = int(t.get("day", 0))
@@ -669,7 +653,7 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tupl
             if resp.status_code == 200:
                 data = decode_json_response(resp)
                 if data.get("choices") and data["choices"]:
-                    content = _fix_mojibake(data["choices"][0]["message"]["content"])
+                    content = data["choices"][0]["message"]["content"]
                     print(f"Vision model OK: {model_id}")
                     vision_model_stats[model_id]["success"] += 1
                     vision_model_stats[model_id]["last_used_ts"] = time.time()
@@ -973,7 +957,7 @@ def _format_uptime(seconds: int) -> str:
 
 # ========== ЭНДПОИНТ: ГЕНЕРАЦИЯ ПЛАНА ==========
 
-@app.post("/api/generate-plan", response_model=PlanResponse)
+@app.post("/api/generate-plan")
 async def generate_plan(req: PlanRequest):
     cache_key_str = f"{req.culture_name.lower()}|{(req.variety or '').lower()}|{req.region_zone}|{req.phase}"
 
@@ -981,11 +965,11 @@ async def generate_plan(req: PlanRequest):
     cached = plan_cache.get(cache_key_str)
     if cached and (now_ts - cached["cached_at"]) < PLAN_CACHE_TTL_SECONDS:
         print(f"Plan cache HIT: {cache_key_str}")
-        return PlanResponse(
-            tasks=[PlanTask(**t) for t in cached["tasks"]],
-            from_cache=True,
-            detected_lifecycle=cached.get("lifecycle"),
-        )
+        return _json_utf8_response({
+            "tasks": cached["tasks"],
+            "from_cache": True,
+            "detected_lifecycle": cached.get("lifecycle"),
+        })
 
     tz_offset = req.timezone_offset_minutes or 0
     local_date = _local_date_for_offset(tz_offset)
@@ -1018,11 +1002,11 @@ async def generate_plan(req: PlanRequest):
     metrics["ask_total"] += 1
     print(f"Plan generated for {req.culture_name}, {len(tasks)} tasks, lifecycle={lifecycle}")
 
-    return PlanResponse(
-        tasks=[PlanTask(**t) for t in tasks],
-        from_cache=False,
-        detected_lifecycle=lifecycle,
-    )
+    return _json_utf8_response({
+        "tasks": tasks,
+        "from_cache": False,
+        "detected_lifecycle": lifecycle,
+    })
 
 
 # Запуск фонового мониторинга upstreams при старте приложения
