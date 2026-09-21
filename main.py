@@ -748,7 +748,7 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
         "вредители, удобрения, обрезка, полив, урожай.\n"
         "ВАЖНО: если вопрос хотя бы частично не по теме — вежливо откажись."
     )
-
+    return system_prompt, max_tokens
 
 # ========== ПРОМПТ ДЛЯ ГЕНЕРАЦИИ ПЛАНА ЗАДАЧ ==========
 
@@ -807,7 +807,7 @@ def build_plan_prompt() -> str:
         "- Использовать поля, отличные от title, description, month, day.\n"
     )
 
-    return system_prompt, max_tokens
+
 
 
 # ========== ЭНДПОИНТЫ ==========
