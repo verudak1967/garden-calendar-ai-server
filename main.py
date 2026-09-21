@@ -503,7 +503,6 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
         "stream": False,
         "temperature": 0.4,   # ниже температура — стабильнее JSON
         "max_tokens": max_tokens,
-        "response_format": {"type": "json_object"},   # DeepSeek поддерживает JSON-режим
     }
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
@@ -512,18 +511,22 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
             json=payload,
         )
     if resp.status_code != 200:
-        log_error("deepseek-plan", f"HTTP {resp.status_code}: {resp.text[:200]}")
+        # Печатаем полный ответ в логи
+        print(f"DeepSeek plan HTTP {resp.status_code}, body: {resp.text[:1000]}")
+        log_error("deepseek-plan", f"HTTP {resp.status_code}: {resp.text[:300]}")
         raise HTTPException(
             status_code=502,
-            detail=f"DeepSeek error {resp.status_code}: {resp.text[:200]}",
+            detail=f"DeepSeek error {resp.status_code}. Проверьте логи сервера.",
         )
-    data = resp.json()
+        data = resp.json()
     content = data["choices"][0]["message"]["content"]
 
-    # Чистим возможные обёртки ```json ... ```
+    # 1. Печатаем в логи первые 1000 символов ответа — для отладки
+    print(f"DeepSeek plan raw content (first 1000):\n{content[:1000]}")
+
+    # 2. Чистим обёртки ```json ... ```
     cleaned = content.strip()
     if cleaned.startswith("```"):
-        # удаляем первую строку (```json) и последнюю (```)
         lines = cleaned.split("\n")
         if lines[0].startswith("```"):
             lines = lines[1:]
@@ -531,16 +534,34 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
             lines = lines[:-1]
         cleaned = "\n".join(lines).strip()
 
+    # 3. Пробуем распарсить напрямую
+    parsed = None
     try:
         parsed = json.loads(cleaned)
-    except Exception as e:
-        log_error("deepseek-plan", f"JSON parse error: {e}. Content: {cleaned[:300]}")
+    except Exception:
+        pass
+
+    # 4. Если не получилось — ищем первый {...} в тексте регуляркой
+    if parsed is None:
+        match = re.search(r'\{[\s\S]*\}', content)
+        if match:
+            try:
+                parsed = json.loads(match.group(0))
+            except Exception:
+                pass
+
+    # 5. Если всё ещё не распарсили — ошибка с полным содержимым в логах
+    if parsed is None:
+        log_error(
+            "deepseek-plan",
+            f"JSON parse error. Full content: {content[:500]}"
+        )
         raise HTTPException(
             status_code=502,
             detail="AI вернул невалидный JSON. Попробуйте ещё раз.",
         )
-    return parsed
 
+    return parsed
 
 def validate_plan_json(parsed: dict) -> List[dict]:
     """
