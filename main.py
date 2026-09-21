@@ -551,15 +551,16 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
             except Exception:
                 pass
 
-    # 5. Если всё ещё не распарсили — ошибка с полным содержимым в логах
+    # 5. Если всё ещё не распарсили — ошибка с полным содержимым в detail
     if parsed is None:
         log_error(
             "deepseek-plan",
             f"JSON parse error. Full content: {content[:500]}"
         )
+        # ВРЕМЕННО: возвращаем сырой ответ, чтобы увидеть причину
         raise HTTPException(
             status_code=502,
-            detail="AI вернул невалидный JSON. Попробуйте ещё раз.",
+            detail=f"RAW: {content[:800]}",
         )
 
     return parsed
