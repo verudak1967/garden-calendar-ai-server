@@ -535,21 +535,31 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
             lines = lines[:-1]
         cleaned = "\n".join(lines).strip()
 
-    # 3. Пробуем распарсить напрямую
+    # 3. Пробуем распарсить напрямую (strict=False разрешает control chars в строках)
     parsed = None
     try:
-        parsed = json.loads(cleaned)
-    except Exception:
-        pass
+        parsed = json.loads(cleaned, strict=False)
+    except Exception as e1:
+        print(f"JSON parse attempt 1 failed: {e1}")
 
-    # 4. Если не получилось — ищем первый {...} в тексте регуляркой
+    # 4. Если не получилось — пробуем заменить сырые переносы на пробелы
+    if parsed is None:
+        try:
+            # Заменяем все control chars (кроме \t) на пробел внутри текста
+            cleaned2 = re.sub(r'[\n\r]', ' ', cleaned)
+            parsed = json.loads(cleaned2, strict=False)
+        except Exception as e2:
+            print(f"JSON parse attempt 2 failed: {e2}")
+
+    # 5. Если всё ещё нет — ищем {...} регуляркой (на случай пояснений вокруг)
     if parsed is None:
         match = re.search(r'\{[\s\S]*\}', content)
         if match:
             try:
-                parsed = json.loads(match.group(0))
-            except Exception:
-                pass
+                inner = re.sub(r'[\n\r]', ' ', match.group(0))
+                parsed = json.loads(inner, strict=False)
+            except Exception as e3:
+                print(f"JSON parse attempt 3 failed: {e3}")
 
     # 5. Если всё ещё не распарсили — ошибка с полным содержимым в detail
     if parsed is None:
@@ -795,7 +805,7 @@ def build_plan_prompt() -> str:
         '  ]\n'
         '}\n\n'
         "ТРЕБОВАНИЯ К ЗАДАЧАМ:\n"
-        "- От 12 до 25 задач на год.\n"
+        "- СТРОГО от 15 до 20 задач на год. Меньше 15 — не принимается.\n"
         "- Поля title и description — на русском, кратко (title до 60 символов, description до 150).\n"
         "- month: 1-12, day: 1-28 (не используй 29-31, чтобы избежать проблем с датами).\n"
         "- Задачи должны идти в хронологическом порядке (по возрастанию месяца).\n"
