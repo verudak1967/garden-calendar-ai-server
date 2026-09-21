@@ -25,8 +25,8 @@ app.add_middleware(
 # === Провайдер для текста (DeepSeek) ===
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-flash"              # для текстовых запросов
-DEEPSEEK_MODEL_PLAN = "deepseek-chat"          # для генерации планов
+DEEPSEEK_MODEL = "deepseek-flash"
+DEEPSEEK_MODEL_PLAN = "deepseek-chat"
 
 # === Провайдер для vision (OpenRouter) ===
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -54,21 +54,32 @@ if not OPENROUTER_API_KEY:
     raise RuntimeError("OPENROUTER_API_KEY environment variable is not set")
 
 
-# ========== УТИЛИТА: безопасное декодирование ответа ==========
+# ========== УТИЛИТЫ ==========
 
 def decode_json_response(resp) -> dict:
-    """
-    Принудительно декодирует ответ как UTF-8.
-    Решает проблему mojibake — когда русский текст приходит как \\u0420\\u0406...
-    """
+    """Принудительно декодирует ответ как UTF-8."""
     try:
         return json.loads(resp.content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
-        # fallback: пробуем автоматическое определение
         return resp.json()
 
 
-# ========== МЕТРИКИ (мониторинг) ==========
+def _fix_mojibake(s: str) -> str:
+    """
+    Исправляет мохибейк: 'РЎРЅРµРі' → 'Снег'.
+    UTF-8-байты, ошибочно интерпретированные как CP1251, декодируются обратно.
+    Если строка уже корректная — возвращается без изменений.
+    """
+    if not s:
+        return s
+    try:
+        fixed = s.encode("cp1251").decode("utf-8")
+        return fixed
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return s
+
+
+# ========== МЕТРИКИ ==========
 
 SERVER_STARTED_AT = time.time()
 
@@ -89,7 +100,6 @@ error_log: deque = deque(maxlen=50)
 
 
 def log_error(source: str, message: str, device_id: str = "unknown"):
-    """Записывает ошибку в ring-buffer и увеличивает счётчик."""
     metrics["errors_total"] += 1
     error_log.append({
         "ts": datetime.utcnow().isoformat() + "Z",
@@ -98,10 +108,11 @@ def log_error(source: str, message: str, device_id: str = "unknown"):
         "device_id": device_id,
     })
 
-# ========== КЭШ ПЛАНОВ (generate-plan) ==========
 
-PLAN_CACHE_TTL_SECONDS = 90 * 24 * 60 * 60   # 90 дней
-plan_cache: dict = {}   # ключ → {"cached_at": ts, "tasks": [...]}
+# ========== КЭШ ПЛАНОВ ==========
+
+PLAN_CACHE_TTL_SECONDS = 90 * 24 * 60 * 60
+plan_cache: dict = {}
 
 
 # ========== ПРОВЕРКА UPSTREAMS ==========
@@ -308,7 +319,7 @@ GARDEN_MARKERS = [
     "микроэлемент", "купорос", "доломит", "известков", "хелат", "гумат",
     "нитроаммофос", "суперфосфат", "калимагнези", "монофосфат",
     "аммиачн", "селитр", "карбамид", "зольн", "перегной", "биогумус",
-    "вермикулит", "перлит", "торф", "сапропел", "сидерат",
+    "вермикулит", "перлит", "торф", "слиз", "сапропел", "сидерат",
     "борн", "азофоск", "нитрофоск", "флоровит", "агрикол", "фертик",
     "эпин", "циркон", "корневин", "гетероауксин", "фитоспорин",
     "триходермин", "боверия", "метаризиум", "актар", "фитоверм",
@@ -475,7 +486,7 @@ async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
     )
     if finish_reason == "length":
         print("WARNING: response truncated by max_tokens!")
-    return choice["message"]["content"]
+    return _fix_mojibake(choice["message"]["content"])
 
 
 # ========== DEEPSEEK С JSON (для generate-plan) ==========
@@ -592,8 +603,8 @@ def validate_plan_json(parsed: dict) -> List[dict]:
     for t in tasks:
         if not isinstance(t, dict):
             continue
-        title = str(t.get("title", "")).strip()
-        description = str(t.get("description", "")).strip()
+        title = _fix_mojibake(str(t.get("title", "")).strip())
+        description = _fix_mojibake(str(t.get("description", "")).strip())
         try:
             month = int(t.get("month", 0))
             day = int(t.get("day", 0))
@@ -644,7 +655,7 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tupl
             if resp.status_code == 200:
                 data = decode_json_response(resp)
                 if data.get("choices") and data["choices"]:
-                    content = data["choices"][0]["message"]["content"]
+                    content = _fix_mojibake(data["choices"][0]["message"]["content"])
                     print(f"Vision model OK: {model_id}")
                     vision_model_stats[model_id]["success"] += 1
                     vision_model_stats[model_id]["last_used_ts"] = time.time()
