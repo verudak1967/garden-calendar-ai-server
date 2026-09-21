@@ -557,10 +557,13 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
             "deepseek-plan",
             f"JSON parse error. Full content: {content[:500]}"
         )
-        # ВРЕМЕННО: возвращаем сырой ответ, чтобы увидеть причину
+        # ДИАГНОСТИКА: показываем длину, начало и конец ответа
+        length = len(content)
+        head = content[:150].replace("\n", "\\n")
+        tail = content[-150:].replace("\n", "\\n")
         raise HTTPException(
             status_code=502,
-            detail=f"RAW: {content[:800]}",
+            detail=f"LEN={length} | HEAD: {head} | TAIL: {tail}",
         )
 
     return parsed
