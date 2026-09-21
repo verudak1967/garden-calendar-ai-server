@@ -25,7 +25,8 @@ app.add_middleware(
 # === Провайдер для текста (DeepSeek) ===
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_MODEL = "deepseek-flash"
+DEEPSEEK_MODEL = "deepseek-flash"              # для текстовых запросов
+DEEPSEEK_MODEL_PLAN = "deepseek-chat"          # для генерации планов
 
 # === Провайдер для vision (OpenRouter) ===
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -495,13 +496,13 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
         "Content-Type": "application/json",
     }
     payload = {
-        "model": DEEPSEEK_MODEL,
+        "model": DEEPSEEK_MODEL_PLAN,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
         "stream": False,
-        "temperature": 0.0,   # 0.0 — детерминированный JSON
+        "temperature": 0.0,
         "max_tokens": max_tokens,
     }
     async with httpx.AsyncClient(timeout=120.0) as client:
@@ -549,10 +550,7 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
     if not content or len(content.strip()) == 0:
         raise HTTPException(
             status_code=502,
-            detail=(
-                "AI вернул пустой ответ — модель не справилась с задачей. "
-                "Попробуйте позже или смените фазу."
-            ),
+            detail="Empty AI response. Try again later.",
         )
 
     # 2. Чистим обёртки ```json ... ```
