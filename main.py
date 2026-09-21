@@ -518,7 +518,8 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
             status_code=502,
             detail=f"DeepSeek error {resp.status_code}. Проверьте логи сервера.",
         )
-        data = resp.json()
+
+    data = resp.json()
     content = data["choices"][0]["message"]["content"]
 
     # 1. Печатаем в логи первые 1000 символов ответа — для отладки
