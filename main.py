@@ -520,7 +520,27 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
         )
 
     data = resp.json()
-    content = data["choices"][0]["message"]["content"]
+
+    # Диагностика структуры ответа
+    if "choices" not in data or not data["choices"]:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No choices in response. Keys: {list(data.keys())}",
+        )
+    choice = data["choices"][0]
+    message = choice.get("message", {})
+    content = message.get("content", "")
+    finish_reason = choice.get("finish_reason", "unknown")
+
+    # Логируем метаданные
+    print(
+        f"DeepSeek plan response: finish_reason={finish_reason}, "
+        f"content_type={type(content).__name__}, content_len={len(content) if content else 0}"
+    )
+
+    # Если content не строка — конвертируем
+    if not isinstance(content, str):
+        content = str(content)
 
     # 1. Печатаем в логи первые 1000 символов ответа — для отладки
     print(f"DeepSeek plan raw content (first 1000):\n{content[:1000]}")
@@ -534,24 +554,22 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         cleaned = "\n".join(lines).strip()
-
-    # 3. Пробуем распарсить напрямую (strict=False разрешает control chars в строках)
+    # 3. Пробуем распарсить напрямую (strict=False разрешает control chars)
     parsed = None
     try:
         parsed = json.loads(cleaned, strict=False)
     except Exception as e1:
         print(f"JSON parse attempt 1 failed: {e1}")
 
-    # 4. Если не получилось — пробуем заменить сырые переносы на пробелы
+    # 4. Вторая попытка — заменяем переносы на пробелы
     if parsed is None:
         try:
-            # Заменяем все control chars (кроме \t) на пробел внутри текста
             cleaned2 = re.sub(r'[\n\r]', ' ', cleaned)
             parsed = json.loads(cleaned2, strict=False)
         except Exception as e2:
             print(f"JSON parse attempt 2 failed: {e2}")
 
-    # 5. Если всё ещё нет — ищем {...} регуляркой (на случай пояснений вокруг)
+    # 5. Третья попытка — через регулярку
     if parsed is None:
         match = re.search(r'\{[\s\S]*\}', content)
         if match:
@@ -560,21 +578,6 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
                 parsed = json.loads(inner, strict=False)
             except Exception as e3:
                 print(f"JSON parse attempt 3 failed: {e3}")
-
-    # 5. Если всё ещё не распарсили — ошибка с полным содержимым в detail
-    if parsed is None:
-        log_error(
-            "deepseek-plan",
-            f"JSON parse error. Full content: {content[:500]}"
-        )
-        # ДИАГНОСТИКА: показываем длину, начало и конец ответа
-        length = len(content)
-        head = content[:150].replace("\n", "\\n")
-        tail = content[-150:].replace("\n", "\\n")
-        raise HTTPException(
-            status_code=502,
-            detail=f"LEN={length} | HEAD: {head} | TAIL: {tail}",
-        )
 
     return parsed
 
@@ -1067,7 +1070,7 @@ async def generate_plan(req: PlanRequest):
 
     # 5. Запрос к DeepSeek
     system_prompt = build_plan_prompt()
-    parsed = await call_deepseek_json(system_prompt, user_prompt, max_tokens=3500)
+    parsed = await call_deepseek_json(system_prompt, user_prompt, max_tokens=5000)
     tasks = validate_plan_json(parsed)
     lifecycle = parsed.get("detected_lifecycle", "")
 
