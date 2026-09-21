@@ -84,6 +84,7 @@ SERVER_STARTED_AT = time.time()
 metrics = {
     "ask_total": 0,
     "ask_photo_total": 0,
+    "plan_total": 0,
     "rejected_total": 0,
     "cache_hits": 0,
     "errors_total": 0,
@@ -961,19 +962,30 @@ def _format_uptime(seconds: int) -> str:
 async def generate_plan(req: PlanRequest):
     cache_key_str = f"{req.culture_name.lower()}|{(req.variety or '').lower()}|{req.region_zone}|{req.phase}"
 
+    tz_offset = req.timezone_offset_minutes or 0
     now_ts = time.time()
+
+    # 1. Проверяем кэш
     cached = plan_cache.get(cache_key_str)
     if cached and (now_ts - cached["cached_at"]) < PLAN_CACHE_TTL_SECONDS:
         print(f"Plan cache HIT: {cache_key_str}")
+        # Cache HIT не списывает лимит (не тратит токены AI)
+        used, limit = get_daily_usage(req.device_id, tz_offset)
         return _json_utf8_response({
             "tasks": cached["tasks"],
             "from_cache": True,
             "detected_lifecycle": cached.get("lifecycle"),
+            "used": used,
+            "limit": limit,
         })
 
-    tz_offset = req.timezone_offset_minutes or 0
+    # 2. Cache MISS — списываем 1 запрос из дневного лимита
+    used, limit = increment_daily_usage(req.device_id, tz_offset)
+
+    # 3. Считаем локальную дату пользователя
     local_date = _local_date_for_offset(tz_offset)
 
+    # 4. Формируем user-промпт
     variety_str = req.variety.strip() if req.variety else "не указан"
     user_prompt = (
         f"Культура: {req.culture_name}\n"
@@ -985,11 +997,13 @@ async def generate_plan(req: PlanRequest):
         "или на полный годовой цикл (многолетники). JSON."
     )
 
+    # 5. Запрос к DeepSeek
     system_prompt = build_plan_prompt()
     parsed = await call_deepseek_json(system_prompt, user_prompt, max_tokens=4000)
     tasks = validate_plan_json(parsed)
     lifecycle = parsed.get("detected_lifecycle", "")
 
+    # 6. Сохраняем в кэш
     plan_cache[cache_key_str] = {
         "cached_at": now_ts,
         "tasks": tasks,
@@ -999,13 +1013,15 @@ async def generate_plan(req: PlanRequest):
         oldest_key = min(plan_cache, key=lambda k: plan_cache[k]["cached_at"])
         plan_cache.pop(oldest_key, None)
 
-    metrics["ask_total"] += 1
+    metrics["plan_total"] += 1
     print(f"Plan generated for {req.culture_name}, {len(tasks)} tasks, lifecycle={lifecycle}")
 
     return _json_utf8_response({
         "tasks": tasks,
         "from_cache": False,
         "detected_lifecycle": lifecycle,
+        "used": used,
+        "limit": limit,
     })
 
 
