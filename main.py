@@ -54,6 +54,20 @@ if not OPENROUTER_API_KEY:
     raise RuntimeError("OPENROUTER_API_KEY environment variable is not set")
 
 
+# ========== УТИЛИТА: безопасное декодирование ответа ==========
+
+def decode_json_response(resp) -> dict:
+    """
+    Принудительно декодирует ответ как UTF-8.
+    Решает проблему mojibake — когда русский текст приходит как \\u0420\\u0406...
+    """
+    try:
+        return json.loads(resp.content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        # fallback: пробуем автоматическое определение
+        return resp.json()
+
+
 # ========== МЕТРИКИ (мониторинг) ==========
 
 SERVER_STARTED_AT = time.time()
@@ -93,24 +107,9 @@ plan_cache: dict = {}   # ключ → {"cached_at": ts, "tasks": [...]}
 # ========== ПРОВЕРКА UPSTREAMS ==========
 
 upstream_health: dict = {
-    "deepseek": {
-        "status": "unknown",
-        "latency_ms": None,
-        "checked_at": None,
-        "error": None,
-    },
-    "openrouter": {
-        "status": "unknown",
-        "latency_ms": None,
-        "checked_at": None,
-        "error": None,
-    },
-    "render": {
-        "status": "unknown",
-        "latency_ms": None,
-        "checked_at": None,
-        "error": None,
-    },
+    "deepseek": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
+    "openrouter": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
+    "render": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
 }
 
 
@@ -176,7 +175,7 @@ def _ping_render() -> None:
                                           "checked_at": now_iso, "error": f"Statuspage HTTP {resp.status_code}"}
             print(f"Upstream Render: Statuspage HTTP {resp.status_code}")
             return
-        data = resp.json()
+        data = decode_json_response(resp)
         indicator = data.get("status", {}).get("indicator", "unknown")
         description = data.get("status", {}).get("description", "")
         if indicator == "none":
@@ -233,8 +232,8 @@ class AskRequest(BaseModel):
     query: str
     context: Optional[str] = ""
     device_id: Optional[str] = "unknown"
-    request_type: Optional[str] = "free"   # "care" | "pests" | "diseases" | "free"
-    timezone_offset_minutes: Optional[int] = 0   # смещение от UTC в минутах (Москва = +180)
+    request_type: Optional[str] = "free"
+    timezone_offset_minutes: Optional[int] = 0
 
 
 class AskPhotoRequest(BaseModel):
@@ -259,8 +258,8 @@ class UsageResponse(BaseModel):
 class PlanRequest(BaseModel):
     culture_name: str
     variety: Optional[str] = ""
-    region_zone: Optional[int] = 5           # USDA-зона 1-9
-    phase: str                                # "P0"..."P9"
+    region_zone: Optional[int] = 5
+    phase: str
     device_id: Optional[str] = "unknown"
     timezone_offset_minutes: Optional[int] = 0
 
@@ -268,14 +267,15 @@ class PlanRequest(BaseModel):
 class PlanTask(BaseModel):
     title: str
     description: str
-    month: int      # 1-12
-    day: int        # 1-31
+    month: int
+    day: int
 
 
 class PlanResponse(BaseModel):
     tasks: List[PlanTask]
     from_cache: bool = False
-    detected_lifecycle: Optional[str] = None   # "annual" | "perennial" | "indoor"
+    detected_lifecycle: Optional[str] = None
+
 
 # ========== СТОП-СЛОВА ==========
 
@@ -400,10 +400,6 @@ FREE_DAILY_LIMIT = 30
 
 
 def _local_date_for_offset(offset_minutes: int) -> str:
-    """
-    Возвращает текущую дату YYYY-MM-DD для пользователя с заданным смещением UTC.
-    Например, для Москвы (offset = +180) в 23:30 UTC → уже следующий день.
-    """
     try:
         tz = timezone(timedelta(minutes=offset_minutes))
     except Exception:
@@ -412,7 +408,6 @@ def _local_date_for_offset(offset_minutes: int) -> str:
 
 
 def get_daily_usage(device_id: str, tz_offset_minutes: int = 0) -> tuple[int, int]:
-    """Возвращает (used, limit) БЕЗ инкремента. Сброс по локальной дате пользователя."""
     today_local = _local_date_for_offset(tz_offset_minutes)
     rec = daily_usage[device_id]
     if rec["local_date"] != today_local:
@@ -422,7 +417,6 @@ def get_daily_usage(device_id: str, tz_offset_minutes: int = 0) -> tuple[int, in
 
 
 def increment_daily_usage(device_id: str, tz_offset_minutes: int = 0) -> tuple[int, int]:
-    """Инкрементирует счётчик. 429, если превышен."""
     used, limit = get_daily_usage(device_id, tz_offset_minutes)
     if used >= limit:
         raise HTTPException(
@@ -463,12 +457,13 @@ async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
             json=payload,
         )
     if resp.status_code != 200:
-        log_error("deepseek", f"HTTP {resp.status_code}: {resp.text[:200]}")
+        log_error("deepseek", f"HTTP {resp.status_code}: {resp.content.decode('utf-8', errors='replace')[:200]}")
         raise HTTPException(
             status_code=502,
-            detail=f"DeepSeek error {resp.status_code}: {resp.text}",
+            detail=f"DeepSeek error {resp.status_code}",
         )
-    data = resp.json()
+
+    data = decode_json_response(resp)
     choice = data["choices"][0]
     finish_reason = choice.get("finish_reason", "unknown")
     usage = data.get("usage", {})
@@ -486,11 +481,6 @@ async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
 # ========== DEEPSEEK С JSON (для generate-plan) ==========
 
 async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: int = 3500) -> dict:
-    """
-    Вызывает DeepSeek и парсит ответ как JSON.
-    Если ответ обёрнут в ```json ... ``` или содержит мусор — извлекает JSON.
-    Возвращает словарь. При ошибке бросает HTTPException 502.
-    """
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -512,17 +502,16 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
             json=payload,
         )
     if resp.status_code != 200:
-        # Печатаем полный ответ в логи
-        print(f"DeepSeek plan HTTP {resp.status_code}, body: {resp.text[:1000]}")
-        log_error("deepseek-plan", f"HTTP {resp.status_code}: {resp.text[:300]}")
+        body = resp.content.decode("utf-8", errors="replace")
+        print(f"DeepSeek plan HTTP {resp.status_code}, body: {body[:1000]}")
+        log_error("deepseek-plan", f"HTTP {resp.status_code}: {body[:300]}")
         raise HTTPException(
             status_code=502,
-            detail=f"DeepSeek error {resp.status_code}. Проверьте логи сервера.",
+            detail=f"DeepSeek error {resp.status_code}. Check server logs.",
         )
 
-    data = resp.json()
+    data = decode_json_response(resp)
 
-    # Диагностика структуры ответа
     if "choices" not in data or not data["choices"]:
         raise HTTPException(
             status_code=502,
@@ -533,27 +522,22 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
     content = message.get("content", "")
     finish_reason = choice.get("finish_reason", "unknown")
 
-    # Логируем метаданные
     print(
         f"DeepSeek plan response: finish_reason={finish_reason}, "
         f"content_type={type(content).__name__}, content_len={len(content) if content else 0}"
     )
 
-    # Если content не строка — конвертируем
     if not isinstance(content, str):
         content = str(content)
 
-    # 1. Печатаем в логи первые 1000 символов ответа — для отладки
     print(f"DeepSeek plan raw content (first 1000):\n{content[:1000]}")
 
-    # 1a. Если ответ пустой — сразу ошибка с понятным текстом
     if not content or len(content.strip()) == 0:
         raise HTTPException(
             status_code=502,
             detail="Empty AI response. Try again later.",
         )
 
-    # 2. Чистим обёртки ```json ... ```
     cleaned = content.strip()
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
@@ -562,14 +546,13 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         cleaned = "\n".join(lines).strip()
-    # 3. Пробуем распарсить напрямую (strict=False разрешает control chars)
+
     parsed = None
     try:
         parsed = json.loads(cleaned, strict=False)
     except Exception as e1:
         print(f"JSON parse attempt 1 failed: {e1}")
 
-    # 4. Вторая попытка — заменяем переносы на пробелы
     if parsed is None:
         try:
             cleaned2 = re.sub(r'[\n\r]', ' ', cleaned)
@@ -577,7 +560,6 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
         except Exception as e2:
             print(f"JSON parse attempt 2 failed: {e2}")
 
-    # 5. Третья попытка — через регулярку
     if parsed is None:
         match = re.search(r'\{[\s\S]*\}', content)
         if match:
@@ -587,19 +569,22 @@ async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: i
             except Exception as e3:
                 print(f"JSON parse attempt 3 failed: {e3}")
 
+    if parsed is None:
+        raise HTTPException(
+            status_code=502,
+            detail="Invalid JSON from AI. Try again.",
+        )
+
     return parsed
 
+
 def validate_plan_json(parsed: dict) -> List[dict]:
-    """
-    Валидирует JSON плана. Возвращает список задач или бросает HTTPException.
-    """
     if not isinstance(parsed, dict) or "tasks" not in parsed:
-        raise HTTPException(status_code=502, detail="AI вернул JSON без поля 'tasks'")
+        raise HTTPException(status_code=502, detail="AI JSON without 'tasks' field")
     tasks = parsed["tasks"]
     if not isinstance(tasks, list) or not tasks:
-        raise HTTPException(status_code=502, detail="AI вернул пустой список задач")
+        raise HTTPException(status_code=502, detail="AI returned empty tasks list")
     if len(tasks) > 40:
-        # обрезаем до 40 (слишком много — не нужно)
         tasks = tasks[:40]
 
     result = []
@@ -626,10 +611,11 @@ def validate_plan_json(parsed: dict) -> List[dict]:
             "day": day,
         })
     if not result:
-        raise HTTPException(status_code=502, detail="AI вернул невалидный план")
+        raise HTTPException(status_code=502, detail="AI returned invalid plan")
     return result
 
-# ========== OPENROUTER (vision) с автоматическим перебором моделей ==========
+
+# ========== OPENROUTER (vision) ==========
 
 async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tuple[str, str]:
     headers = {
@@ -656,7 +642,7 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tupl
                 )
 
             if resp.status_code == 200:
-                data = resp.json()
+                data = decode_json_response(resp)
                 if data.get("choices") and data["choices"]:
                     content = data["choices"][0]["message"]["content"]
                     print(f"Vision model OK: {model_id}")
@@ -665,7 +651,7 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tupl
                     vision_model_stats[model_id]["last_error"] = None
                     return content, model_id
                 else:
-                    print(f"Model {model_id} returned no choices: {data}")
+                    print(f"Model {model_id} returned no choices")
                     last_error = f"{model_id}: no choices"
                     vision_model_stats[model_id]["fail"] += 1
                     vision_model_stats[model_id]["last_error"] = "no choices"
@@ -679,8 +665,8 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tupl
                 continue
 
             else:
-                print(f"Model {model_id} error {resp.status_code}: {resp.text}")
-                last_error = f"{model_id}: {resp.status_code} {resp.text[:200]}"
+                print(f"Model {model_id} error {resp.status_code}")
+                last_error = f"{model_id}: {resp.status_code}"
                 vision_model_stats[model_id]["fail"] += 1
                 vision_model_stats[model_id]["last_error"] = f"HTTP {resp.status_code}"
                 log_error("openrouter", f"{model_id}: HTTP {resp.status_code}")
@@ -710,9 +696,7 @@ async def classify_topic(query: str) -> bool:
         "болезни и вредителей растений, уход за растениями, удобрения и подкормки, "
         "почву, семена, рассаду, теплицы, обрезку, полив, посадку.\n\n"
         "Отвечай YES, если запрос хотя бы косвенно про растения или сад.\n"
-        "Отвечай NO только если запрос явно не по теме (программирование, "
-        "погода, политика, стихи, анекдоты, медицина человека, рецепты еды, "
-        "финансы, отношения).\n\n"
+        "Отвечай NO только если запрос явно не по теме.\n\n"
         "Ответь ОДНИМ словом: YES или NO.\n\n"
         f"Запрос: {query}"
     )
@@ -728,83 +712,63 @@ async def classify_topic(query: str) -> bool:
 # ========== СБОРКА ПРОМПТА ДЛЯ /api/ask ==========
 
 def build_system_prompt(request_type: str) -> tuple[str, int]:
-    """
-    Возвращает (system_prompt, max_tokens) в зависимости от типа запроса.
-    - care / pests / diseases: 2000 символов, max_tokens=3000
-    - free (справочник): 3000 символов, max_tokens=4000
-    """
     is_culture_request = request_type in ("care", "pests", "diseases")
 
     if is_culture_request:
-        length_limit = "не более 2000 символов (примерно 1000–1200 слов)"
+        length_limit = "не более 2000 символов"
         max_tokens = 3000
         if request_type == "care":
             structure_hint = (
-                "Обязательные разделы (выбери 4–6, самые важные для этой культуры):\n"
+                "Обязательные разделы (4–6):\n"
                 "- `## Полив`\n"
                 "- `## Подкормка`\n"
                 "- `## Обрезка`\n"
                 "- `## Мульчирование`\n"
                 "- `## Подготовка к зиме`\n"
-                "- `## Перспективные сорта` — 2–3 новых перспективных сорта этой культуры "
-                "с кратким описанием (1 строка на сорт)."
+                "- `## Перспективные сорта` — 2–3 сорта."
             )
         elif request_type == "pests":
             structure_hint = (
-                "Обязательные разделы:\n"
-                "- `## Основные вредители` — 3–5 вредителей с признаками поражения.\n"
-                "- `## Препараты` — конкретные названия и дозировки.\n"
-                "- `## Профилактика` — что делать для предотвращения.\n"
-                "- `## Устойчивые сорта` — 2–3 сорта этой культуры, устойчивых к вредителям."
+                "Разделы:\n"
+                "- `## Основные вредители`\n"
+                "- `## Препараты`\n"
+                "- `## Профилактика`\n"
+                "- `## Устойчивые сорта`"
             )
-        else:  # diseases
+        else:
             structure_hint = (
-                "Обязательные разделы:\n"
-                "- `## Основные болезни` — 3–5 болезней с признаками.\n"
-                "- `## Препараты` — конкретные названия и дозировки.\n"
-                "- `## Профилактика` — что делать для предотвращения.\n"
-                "- `## Устойчивые сорта` — 2–3 сорта этой культуры, устойчивых к болезням."
+                "Разделы:\n"
+                "- `## Основные болезни`\n"
+                "- `## Препараты`\n"
+                "- `## Профилактика`\n"
+                "- `## Устойчивые сорта`"
             )
     else:
-        length_limit = "не более 3000 символов (примерно 1500–1800 слов)"
+        length_limit = "не более 3000 символов"
         max_tokens = 4000
         structure_hint = (
-            "Раскрой 5–7 ключевых разделов по теме. НЕ пиши статью.\n"
-            "Если запрос про конкретное растение — добавь раздел "
-            "`## Перспективные сорта` с 2–3 новыми перспективными сортами "
-            "(1 строка на сорт с кратким описанием).\n"
-            "Если запрос общий (не про конкретное растение) — этот раздел пропусти."
+            "Раскрой 5–7 ключевых разделов. Если запрос про растение — добавь "
+            "`## Перспективные сорта`."
         )
 
     system_prompt = (
-        f"Ты — эксперт-садовод. Отвечай на русском языке, структурированно, но КРАТКО.\n\n"
-        f"ЖЁСТКОЕ ОГРАНИЧЕНИЕ: ответ {length_limit}. "
-        f"Лучше коротко и по делу, чем подробно и обрезанно.\n\n"
+        f"Ты — эксперт-садовод. Отвечай на русском, структурированно, КРАТКО.\n\n"
+        f"ОГРАНИЧЕНИЕ: {length_limit}.\n\n"
         f"{structure_hint}\n\n"
-        "ФОРМАТ ОТВЕТА (обязательно):\n"
-        "1. Каждый смысловой раздел начинай с markdown-заголовка второго уровня — "
-        "два символа решётки и пробел: `## Название раздела`.\n"
-        "   ПРАВИЛЬНО: `## Полив`, `## Подкормка`, `## Перспективные сорта`.\n"
-        "   НЕПРАВИЛЬНО: `**Полив**`, `**Подкормка**`, `1. Полив`.\n"
-        "2. Внутри каждого раздела — маркированный список через `- ` или "
-        "нумерованный через `1. `.\n"
-        "3. Жирным (`**термин**`) выделяй ТОЛЬКО названия препаратов и "
-        "ключевые термины ВНУТРИ текста, а не заголовки.\n"
-        "4. НЕ повторяй вопрос, не пиши вступление и заключение — сразу к делу.\n\n"
-        "Тема: садоводство, огородничество, комнатные растения, болезни растений, "
-        "вредители, удобрения, обрезка, полив, урожай.\n"
-        "ВАЖНО: если вопрос хотя бы частично не по теме — вежливо откажись."
+        "ФОРМАТ:\n"
+        "1. Разделы — через `## Название`.\n"
+        "2. Внутри — списки через `- ` или `1. `.\n"
+        "3. Жирным (`**термин**`) — только названия препаратов.\n"
+        "4. Без вступлений и заключений.\n\n"
+        "Тема: садоводство, огородничество, растения, вредители.\n"
+        "Если вопрос не по теме — вежливо откажись."
     )
     return system_prompt, max_tokens
 
-# ========== ПРОМПТ ДЛЯ ГЕНЕРАЦИИ ПЛАНА ЗАДАЧ ==========
 
+# ========== ПРОМПТ ДЛЯ ГЕНЕРАЦИИ ПЛАНА ==========
 
 def build_plan_prompt() -> str:
-    """
-    Компактный system_prompt для генерации годового плана задач.
-    Включает УФВ (сокращённо) — экономит токены.
-    """
     return (
         "Ты — эксперт-садовод. Составь годовой план ухода за растением в виде задач.\n"
         "Отвечай СТРОГО в JSON, без Markdown, без пояснений:\n"
@@ -817,17 +781,15 @@ def build_plan_prompt() -> str:
         "- Хронологический порядок. Без дублей.\n"
         "- Даты примерные для средней полосы.\n\n"
         "ТИП РАСТЕНИЯ (определи сам):\n"
-        "- annual — однолетник (томат, огурец, морковь, укроп, картофель).\n"
-        "- perennial — многолетник (яблоня, смородина, роза, хоста). Включи зимние задачи.\n"
-        "- indoor — комнатное (фикус, орхидея, сансевиерия). Без сезонности.\n\n"
-        "ФАЗЫ ВЕГЕТАЦИИ (УФВ):\n"
+        "- annual — однолетник (томат, огурец, морковь, картофель).\n"
+        "- perennial — многолетник (яблоня, смородина, роза). Включи зимние задачи.\n"
+        "- indoor — комнатное (фикус, орхидея). Без сезонности.\n\n"
+        "ФАЗЫ ВЕГЕТАЦИИ:\n"
         "P0 покой | P1 пробуждение | P2 рост | P3 бутонизация | P4 цветение | "
         "P5 завязывание | P6 рост плодов | P7 созревание | P8 завершение | P9 переход в покой.\n\n"
-        "Строй план ОТ текущей фазы пользователя до конца сезона (или годовой круг).\n"
+        "Строй план ОТ текущей фазы до конца сезона (или годовой круг).\n"
         "ЗАПРЕЩЕНО: Markdown, текст до/после JSON, комментарии.\n"
     )
-
-
 
 
 # ========== ЭНДПОИНТЫ ==========
@@ -848,13 +810,11 @@ def get_usage(
 
 @app.post("/api/ask", response_model=AiResponse)
 async def ask(req: AskRequest):
-    # 1. Rule-фильтр (без обращения к AI)
     verdict, reason = rule_filter(req.query)
     if verdict == "deny":
         metrics["rejected_total"] += 1
         raise HTTPException(status_code=400, detail=reason)
 
-    # 2. LLM-классификатор для пограничных случаев
     if verdict == "check":
         if not await classify_topic(req.query):
             metrics["rejected_total"] += 1
@@ -863,22 +823,19 @@ async def ask(req: AskRequest):
                 detail="Приложение отвечает только на вопросы о садоводстве и растениях"
             )
 
-    # 3. Инкремент счётчика только после успешных фильтров
     tz_offset = req.timezone_offset_minutes or 0
     used, limit = increment_daily_usage(req.device_id, tz_offset)
 
-    # 4. Кэш
     key = cache_key(req.query, req.context)
     if key in server_cache:
         metrics["cache_hits"] += 1
         return AiResponse(text=server_cache[key], used=used, limit=limit)
 
-    # 5. Формируем промпт в зависимости от типа запроса
     system_prompt, max_tokens_for_request = build_system_prompt(req.request_type or "free")
 
     user_content = req.query
     if req.context:
-        user_content = f"Контекст (растение/тема): {req.context}\n\nВопрос: {req.query}"
+        user_content = f"Контекст: {req.context}\n\nВопрос: {req.query}"
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -896,32 +853,16 @@ async def ask(req: AskRequest):
 
 @app.post("/api/ask-photo", response_model=AiResponse)
 async def ask_photo(req: AskPhotoRequest):
-    """Анализ фото растения через OpenRouter с автоматическим перебором vision-моделей."""
     tz_offset = req.timezone_offset_minutes or 0
     used, limit = increment_daily_usage(req.device_id, tz_offset)
 
     system_prompt = (
-        "Ты — эксперт-садовод и фитопатолог. Твоя задача — анализировать "
-        "фотографии ЖИВЫХ РАСТЕНИЙ: их листьев, стеблей, корней, плодов, цветков, "
-        "а также признаки болезней, вредителей и дефицита питания.\n\n"
-        "ЕСЛИ на фото НЕТ растения (или его части) — вежливо откажись "
-        "от анализа и объясни, что приложение работает только с растениями. "
-        "Не предлагай использовать не-растительные объекты (шины, бутылки, "
-        "вёдра, ящики, строительные материалы, инструменты, людей, животных, "
-        "еду, предметы быта) в саду — это НЕ твоя задача.\n\n"
-        "Если на фото растение — определи:\n"
-        "1) что это за растение (если возможно);\n"
-        "2) какие проблемы видны (болезнь, вредитель, дефицит питания, "
-        "механические повреждения);\n"
-        "3) что делать — конкретные шаги и препараты.\n\n"
-        "Отвечай на русском языке, структурированно, кратко (не более 2000 символов).\n\n"
-        "ФОРМАТ ОТВЕТА (обязательно):\n"
-        "- Разделы обозначай через `## Название раздела`.\n"
-        "- Внутри разделов — маркированные или нумерованные списки.\n"
-        "- Названия препаратов и ключевые термины выделяй жирным `**термин**`.\n\n"
-        "Пример правильного отказа: «На фото — автомобильные шины, это не растение. "
-        "Приложение анализирует только растения и их проблемы. "
-        "Пришлите фото листа, стебля или плода растения.»"
+        "Ты — эксперт-садовод и фитопатолог. Проанализируй фото растения.\n"
+        "Если на фото НЕ растение — вежливо откажись.\n"
+        "Если растение — определи: 1) что за растение, 2) проблемы (болезнь, "
+        "вредитель, дефицит), 3) что делать.\n"
+        "Отвечай на русском, структурированно, кратко (до 2000 символов).\n"
+        "Разделы — через `## Название`."
     )
     user_text = req.context or "Определи, что на фото, и что делать."
     user_content = [
@@ -1005,23 +946,12 @@ def _format_uptime(seconds: int) -> str:
     return " ".join(parts)
 
 
-# ========== ЭНДПОИНТ: ГЕНЕРАЦИЯ ПЛАНА ЗАДАЧ ==========
+# ========== ЭНДПОИНТ: ГЕНЕРАЦИЯ ПЛАНА ==========
 
 @app.post("/api/generate-plan", response_model=PlanResponse)
 async def generate_plan(req: PlanRequest):
-    """
-    Генерирует план задач для культуры на основе:
-    - названия и сорта
-    - региона (USDA-зоны)
-    - текущей фазы вегетации (УФВ)
-    - текущей даты
-
-    Кэширует на 90 дней по ключу culture|variety|zone|phase.
-    """
-    # 1. Формируем ключ кэша
     cache_key_str = f"{req.culture_name.lower()}|{(req.variety or '').lower()}|{req.region_zone}|{req.phase}"
 
-    # 2. Проверяем кэш
     now_ts = time.time()
     cached = plan_cache.get(cache_key_str)
     if cached and (now_ts - cached["cached_at"]) < PLAN_CACHE_TTL_SECONDS:
@@ -1032,41 +962,35 @@ async def generate_plan(req: PlanRequest):
             detected_lifecycle=cached.get("lifecycle"),
         )
 
-    # 3. Считаем локальную дату пользователя
     tz_offset = req.timezone_offset_minutes or 0
     local_date = _local_date_for_offset(tz_offset)
 
-    # 4. Формируем user-промпт
     variety_str = req.variety.strip() if req.variety else "не указан"
     user_prompt = (
         f"Культура: {req.culture_name}\n"
         f"Сорт: {variety_str}\n"
         f"Климатическая зона USDA: {req.region_zone}\n"
-        f"Текущая фаза вегетации (УФВ): {req.phase}\n"
-        f"Сегодняшняя дата: {local_date}\n\n"
-        "Составь план задач от текущей фазы до конца сезона (для однолетников) "
-        "или на полный годовой цикл (для многолетников). "
-        "Ответь строго в формате JSON."
+        f"Текущая фаза (УФВ): {req.phase}\n"
+        f"Сегодня: {local_date}\n\n"
+        "Составь план от текущей фазы до конца сезона (однолетники) "
+        "или на полный годовой цикл (многолетники). JSON."
     )
 
-    # 5. Запрос к DeepSeek
     system_prompt = build_plan_prompt()
     parsed = await call_deepseek_json(system_prompt, user_prompt, max_tokens=4000)
     tasks = validate_plan_json(parsed)
     lifecycle = parsed.get("detected_lifecycle", "")
 
-    # 6. Сохраняем в кэш
     plan_cache[cache_key_str] = {
         "cached_at": now_ts,
         "tasks": tasks,
         "lifecycle": lifecycle,
     }
-    # Ограничиваем размер кэша
     if len(plan_cache) > 500:
         oldest_key = min(plan_cache, key=lambda k: plan_cache[k]["cached_at"])
         plan_cache.pop(oldest_key, None)
 
-    metrics["ask_total"] += 1   # учитываем как запрос
+    metrics["ask_total"] += 1
     print(f"Plan generated for {req.culture_name}, {len(tasks)} tasks, lifecycle={lifecycle}")
 
     return PlanResponse(
@@ -1074,6 +998,7 @@ async def generate_plan(req: PlanRequest):
         from_cache=False,
         detected_lifecycle=lifecycle,
     )
+
 
 # Запуск фонового мониторинга upstreams при старте приложения
 threading.Thread(target=_upstream_loop, daemon=True).start()
