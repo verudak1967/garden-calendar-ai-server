@@ -446,8 +446,15 @@ def increment_daily_usage(device_id: str, tz_offset_minutes: int = 0) -> tuple[i
 server_cache: dict = {}
 
 
-def cache_key(query: str, context: str) -> str:
-    return hashlib.sha256(f"{context}|{query}".lower().encode()).hexdigest()
+def cache_key(
+    query: str,
+    context: str,
+    culture_name: str = "",
+    variety: str = "",
+    region_zone: int = 0,
+) -> str:
+    raw = f"{context}|{query}|{culture_name}|{variety}|{region_zone}".lower()
+    return hashlib.sha256(raw.encode()).hexdigest()
 
 
 # ========== DEEPSEEK (текст) ==========
@@ -974,7 +981,13 @@ async def ask(req: AskRequest):
     tz_offset = req.timezone_offset_minutes or 0
     used, limit = increment_daily_usage(req.device_id, tz_offset)
 
-    key = cache_key(req.query, req.context)
+    key = cache_key(
+        query=req.query,
+        context=req.context or "",
+        culture_name=req.culture_name or "",
+        variety=req.variety or "",
+        region_zone=req.region_zone or 0,
+    )
     if key in server_cache:
         metrics["cache_hits"] += 1
         return AiResponse(text=server_cache[key], used=used, limit=limit)
