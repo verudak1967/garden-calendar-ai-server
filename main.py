@@ -26,12 +26,11 @@ app.add_middleware(
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
-# ✅ ИСПРАВЛЕНО: актуальные модели (deepseek-chat мёртв с 24.07.2026)
-DEEPSEEK_MODEL = "deepseek-v4-pro"          # GA-сборка 0813
-DEEPSEEK_MODEL_PLAN = "deepseek-v4-pro"     # для генерации плана
-
-# ✅ НОВОЕ: управление Thinking Mode
-DEEPSEEK_DEFAULT_REASONING_EFFORT = "high"  # low / high / max; none = отключено
+# ✅ ОБНОВЛЕНО: используется актуальная модель deepseek-flash
+#    (deepseek-chat мёртв с 24.07.2026; deepseek-v4-pro — legacy-алиас)
+#    Режим размышлений ВЫКЛЮЧЕН принудительно во всех вызовах.
+DEEPSEEK_MODEL = "deepseek-flash"
+DEEPSEEK_MODEL_PLAN = "deepseek-flash"
 
 # === Провайдер для vision (OpenRouter) ===
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -471,14 +470,13 @@ def cache_key(
 async def call_deepseek(
     messages: list,
     max_tokens: int = 4000,
-    thinking: bool = True,
-    reasoning_effort: str = DEEPSEEK_DEFAULT_REASONING_EFFORT,
+    temperature: float = 0.5,
 ) -> str:
     """
-    ✅ ОБНОВЛЕНО под DeepSeek-V4-Pro-0813:
-    - thinking: True/False — включает/отключает режим размышлений.
-    - reasoning_effort: "low" | "high" | "max" | "none" (none = отключено).
-    - temperature не передаём, т.к. в thinking-режиме он игнорируется.
+    ✅ ОБНОВЛЕНО под deepseek-flash:
+    - Режим размышлений (thinking) ОТКЛЮЧЁН принудительно.
+    - reasoning_effort="none" + thinking={"type":"disabled"}.
+    - temperature работает, т.к. thinking отключён.
     """
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -490,17 +488,11 @@ async def call_deepseek(
         "messages": messages,
         "stream": False,
         "max_tokens": max_tokens,
+        "temperature": temperature,
+        # ✅ Thinking Mode выключен
+        "thinking": {"type": "disabled"},
+        "reasoning_effort": "none",
     }
-
-    if thinking:
-        payload["thinking"] = {"type": "enabled"}
-        payload["reasoning_effort"] = reasoning_effort
-    else:
-        payload["thinking"] = {"type": "disabled"}
-        # reasoning_effort="none" эквивалентно отключению
-        payload["reasoning_effort"] = "none"
-        # В non-thinking можно temperature
-        payload["temperature"] = 0.5
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
@@ -525,11 +517,10 @@ async def call_deepseek(
     usage = data.get("usage", {})
 
     print(
-        f"DeepSeek: finish_reason={finish_reason}, "
+        f"DeepSeek: model={DEEPSEEK_MODEL}, finish_reason={finish_reason}, "
         f"prompt_tokens={usage.get('prompt_tokens')}, "
         f"completion_tokens={usage.get('completion_tokens')}, "
-        f"reasoning_tokens={usage.get('reasoning_tokens')}, "
-        f"max_tokens={max_tokens}, thinking={thinking}"
+        f"max_tokens={max_tokens}, thinking=disabled"
     )
 
     if finish_reason == "length":
@@ -549,8 +540,8 @@ async def call_deepseek_json(
     max_tokens: int = 4000,
 ) -> dict:
     """
-    ✅ ОБНОВЛЕНО: используется response_format={"type": "json_object"},
-    thinking включён с effort="high" для точного следования схеме.
+    ✅ ОБНОВЛЕНО: deepseek-flash без размышлений,
+    response_format={"type": "json_object"} для точного следования схеме.
     """
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
@@ -564,9 +555,11 @@ async def call_deepseek_json(
         ],
         "stream": False,
         "max_tokens": max_tokens,
+        "temperature": 0.5,
         "response_format": {"type": "json_object"},
-        "thinking": {"type": "enabled"},
-        "reasoning_effort": "high",
+        # ✅ Thinking Mode выключен
+        "thinking": {"type": "disabled"},
+        "reasoning_effort": "none",
     }
 
     async with httpx.AsyncClient(timeout=150.0) as client:
@@ -778,12 +771,8 @@ async def classify_topic(query: str) -> bool:
     )
     messages = [{"role": "user", "content": prompt}]
     try:
-        # ✅ ВАЖНО: отключаем thinking, иначе max_tokens=5 обрежет reasoning и ответ будет мусором
-        result = await call_deepseek(
-            messages,
-            max_tokens=10,           # достаточно для YES/NO
-            thinking=False,          # thinking отключён
-        )
+        # ✅ Thinking Mode уже отключён глобально в call_deepseek
+        result = await call_deepseek(messages, max_tokens=10)
         return "YES" in result.strip().upper()
     except Exception as e:
         print(f"Classifier error: {e}")
@@ -795,7 +784,7 @@ async def classify_topic(query: str) -> bool:
 def build_system_prompt(request_type: str) -> tuple[str, int]:
     """
     Возвращает (system_prompt, max_tokens) в зависимости от типа запроса.
-    Все промпты переписаны под deepseek-v4-pro с требованием конкретики.
+    Все промпты переписаны под deepseek-flash с требованием конкретики.
     """
     is_culture_request = request_type in ("care", "pests", "diseases")
 
