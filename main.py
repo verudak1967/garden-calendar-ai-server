@@ -406,7 +406,7 @@ def rule_filter(query: str) -> tuple[str, str]:
 # ========== ЛИМИТЫ ==========
 
 daily_usage: dict = defaultdict(lambda: {"local_date": None, "count": 0})
-FREE_DAILY_LIMIT = 30
+FREE_DAILY_LIMIT = 10
 
 
 def _local_date_for_offset(offset_minutes: int) -> str:
@@ -729,7 +729,7 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
     is_culture_request = request_type in ("care", "pests", "diseases")
 
     if request_type == "care":
-        max_tokens = 5000
+        max_tokens = 6000
         system_prompt = (
             "Ты — опытный агроном-садовод с 30-летним стажем. Специализация: плодовые, "
             "ягодные и овощные культуры средней полосы и юга России.\n\n"
@@ -775,7 +775,7 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
         return system_prompt, max_tokens
 
     if request_type == "pests":
-        max_tokens = 5000
+        max_tokens = 6000
         system_prompt = (
             "Ты — фитопатолог-энтомолог, специализация: вредители садовых и огородных "
             "культур. Отвечай как практик — конкретно, с препаратами и дозировками.\n\n"
@@ -820,7 +820,7 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
         return system_prompt, max_tokens
 
     if request_type == "diseases":
-        max_tokens = 5000
+        max_tokens = 6000
         system_prompt = (
             "Ты — фитопатолог, специализация: грибковые, бактериальные и вирусные "
             "болезни садовых и огородных культур. Отвечай как практик — с препаратами, "
@@ -867,7 +867,7 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
         return system_prompt, max_tokens
 
     # ===== FREE (справочник) =====
-    max_tokens = 5000
+    max_tokens = 6000
     system_prompt = (
         "Ты — опытный агроном-садовод, автор книг по органическому земледелию. "
         "Отвечаешь на любые вопросы о саде, огороде, растениях, вредителях, "
