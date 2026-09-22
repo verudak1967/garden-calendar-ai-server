@@ -25,12 +25,8 @@ app.add_middleware(
 # === Провайдер для текста (DeepSeek) ===
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-
-# ✅ ОБНОВЛЕНО: используется актуальная модель deepseek-flash
-#    (deepseek-chat мёртв с 24.07.2026; deepseek-v4-pro — legacy-алиас)
-#    Режим размышлений ВЫКЛЮЧЕН принудительно во всех вызовах.
-DEEPSEEK_MODEL = "deepseek-flash"
-DEEPSEEK_MODEL_PLAN = "deepseek-flash"
+DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_MODEL_PLAN = "deepseek-chat"
 
 # === Провайдер для vision (OpenRouter) ===
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -59,11 +55,6 @@ if not OPENROUTER_API_KEY:
 
 
 # ========== УТИЛИТЫ ==========
-
-def now_iso() -> str:
-    """✅ Замена устаревшего datetime.utcnow()."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
 
 def decode_json_response(resp) -> dict:
     """Принудительно декодирует ответ как UTF-8."""
@@ -110,7 +101,7 @@ error_log: deque = deque(maxlen=50)
 def log_error(source: str, message: str, device_id: str = "unknown"):
     metrics["errors_total"] += 1
     error_log.append({
-        "ts": now_iso(),
+        "ts": datetime.utcnow().isoformat() + "Z",
         "source": source,
         "message": message[:500],
         "device_id": device_id,
@@ -141,19 +132,19 @@ def _ping_deepseek() -> None:
                 headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
             )
         latency = int((time.time() - start) * 1000)
-        now = now_iso()
+        now_iso = datetime.utcnow().isoformat() + "Z"
         if resp.status_code == 200:
             upstream_health["deepseek"] = {"status": "ok", "latency_ms": latency,
-                                            "checked_at": now, "error": None}
+                                            "checked_at": now_iso, "error": None}
             print(f"Upstream DeepSeek: OK ({latency}ms)")
         else:
             upstream_health["deepseek"] = {"status": "error", "latency_ms": latency,
-                                            "checked_at": now, "error": f"HTTP {resp.status_code}"}
+                                            "checked_at": now_iso, "error": f"HTTP {resp.status_code}"}
             print(f"Upstream DeepSeek: HTTP {resp.status_code}")
     except Exception as e:
-        now = now_iso()
+        now_iso = datetime.utcnow().isoformat() + "Z"
         upstream_health["deepseek"] = {"status": "error", "latency_ms": None,
-                                        "checked_at": now, "error": str(e)[:200]}
+                                        "checked_at": now_iso, "error": str(e)[:200]}
         print(f"Upstream DeepSeek: exception {e}")
 
 
@@ -166,19 +157,19 @@ def _ping_openrouter() -> None:
                 headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
             )
         latency = int((time.time() - start) * 1000)
-        now = now_iso()
+        now_iso = datetime.utcnow().isoformat() + "Z"
         if resp.status_code == 200:
             upstream_health["openrouter"] = {"status": "ok", "latency_ms": latency,
-                                              "checked_at": now, "error": None}
+                                              "checked_at": now_iso, "error": None}
             print(f"Upstream OpenRouter: OK ({latency}ms)")
         else:
             upstream_health["openrouter"] = {"status": "error", "latency_ms": latency,
-                                              "checked_at": now, "error": f"HTTP {resp.status_code}"}
+                                              "checked_at": now_iso, "error": f"HTTP {resp.status_code}"}
             print(f"Upstream OpenRouter: HTTP {resp.status_code}")
     except Exception as e:
-        now = now_iso()
+        now_iso = datetime.utcnow().isoformat() + "Z"
         upstream_health["openrouter"] = {"status": "error", "latency_ms": None,
-                                          "checked_at": now, "error": str(e)[:200]}
+                                          "checked_at": now_iso, "error": str(e)[:200]}
         print(f"Upstream OpenRouter: exception {e}")
 
 
@@ -188,10 +179,10 @@ def _ping_render() -> None:
         with httpx.Client(timeout=15.0) as client:
             resp = client.get(RENDER_STATUS_URL)
         latency = int((time.time() - start) * 1000)
-        now = now_iso()
+        now_iso = datetime.utcnow().isoformat() + "Z"
         if resp.status_code != 200:
             upstream_health["render"] = {"status": "error", "latency_ms": latency,
-                                          "checked_at": now, "error": f"Statuspage HTTP {resp.status_code}"}
+                                          "checked_at": now_iso, "error": f"Statuspage HTTP {resp.status_code}"}
             print(f"Upstream Render: Statuspage HTTP {resp.status_code}")
             return
         data = decode_json_response(resp)
@@ -199,16 +190,16 @@ def _ping_render() -> None:
         description = data.get("status", {}).get("description", "")
         if indicator == "none":
             upstream_health["render"] = {"status": "ok", "latency_ms": latency,
-                                          "checked_at": now, "error": None}
+                                          "checked_at": now_iso, "error": None}
             print(f"Upstream Render: OK ({latency}ms) — {description}")
         else:
             upstream_health["render"] = {"status": "error", "latency_ms": latency,
-                                          "checked_at": now, "error": description or f"indicator={indicator}"}
+                                          "checked_at": now_iso, "error": description or f"indicator={indicator}"}
             print(f"Upstream Render: {indicator} — {description}")
     except Exception as e:
-        now = now_iso()
+        now_iso = datetime.utcnow().isoformat() + "Z"
         upstream_health["render"] = {"status": "error", "latency_ms": None,
-                                      "checked_at": now, "error": str(e)[:200]}
+                                      "checked_at": now_iso, "error": str(e)[:200]}
         print(f"Upstream Render: exception {e}")
 
 
@@ -253,9 +244,10 @@ class AskRequest(BaseModel):
     device_id: Optional[str] = "unknown"
     request_type: Optional[str] = "free"   # "care" | "pests" | "diseases" | "free"
     timezone_offset_minutes: Optional[int] = 0
-    culture_name: Optional[str] = ""
-    variety: Optional[str] = ""
-    region_zone: Optional[int] = 0
+    # Контекст культуры (передаётся клиентом для более точных ответов)
+    culture_name: Optional[str] = ""       # "Яблоня"
+    variety: Optional[str] = ""            # "Антоновка"
+    region_zone: Optional[int] = 0         # USDA 1-9, 0 = не указано
 
 
 class AskPhotoRequest(BaseModel):
@@ -467,43 +459,26 @@ def cache_key(
 
 # ========== DEEPSEEK (текст) ==========
 
-async def call_deepseek(
-    messages: list,
-    max_tokens: int = 4000,
-    temperature: float = 0.5,
-) -> str:
-    """
-    ✅ ОБНОВЛЕНО под deepseek-flash:
-    - Режим размышлений (thinking) ОТКЛЮЧЁН принудительно.
-    - reasoning_effort="none" + thinking={"type":"disabled"}.
-    - temperature работает, т.к. thinking отключён.
-    """
+async def call_deepseek(messages: list, max_tokens: int = 4000) -> str:
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
     }
-
     payload = {
         "model": DEEPSEEK_MODEL,
         "messages": messages,
         "stream": False,
+        "temperature": 0.5,
         "max_tokens": max_tokens,
-        "temperature": temperature,
-        # ✅ Thinking Mode выключен
-        "thinking": {"type": "disabled"},
-        "reasoning_effort": "none",
     }
-
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=90.0) as client:
         resp = await client.post(
             f"{DEEPSEEK_BASE_URL}/chat/completions",
             headers=headers,
             json=payload,
         )
-
     if resp.status_code != 200:
-        body = resp.content.decode("utf-8", errors="replace")
-        log_error("deepseek", f"HTTP {resp.status_code}: {body[:200]}")
+        log_error("deepseek", f"HTTP {resp.status_code}: {resp.content.decode('utf-8', errors='replace')[:200]}")
         raise HTTPException(
             status_code=502,
             detail=f"DeepSeek error {resp.status_code}",
@@ -511,38 +486,22 @@ async def call_deepseek(
 
     data = decode_json_response(resp)
     choice = data["choices"][0]
-    message = choice.get("message", {})
-    content = message.get("content", "")
     finish_reason = choice.get("finish_reason", "unknown")
     usage = data.get("usage", {})
-
     print(
-        f"DeepSeek: model={DEEPSEEK_MODEL}, finish_reason={finish_reason}, "
+        f"DeepSeek: finish_reason={finish_reason}, "
         f"prompt_tokens={usage.get('prompt_tokens')}, "
         f"completion_tokens={usage.get('completion_tokens')}, "
-        f"max_tokens={max_tokens}, thinking=disabled"
+        f"max_tokens={max_tokens}"
     )
-
     if finish_reason == "length":
         print("WARNING: response truncated by max_tokens!")
-
-    if not isinstance(content, str):
-        content = str(content)
-
-    return content
+    return choice["message"]["content"]
 
 
 # ========== DEEPSEEK С JSON (для generate-plan) ==========
 
-async def call_deepseek_json(
-    system_prompt: str,
-    user_prompt: str,
-    max_tokens: int = 4000,
-) -> dict:
-    """
-    ✅ ОБНОВЛЕНО: deepseek-flash без размышлений,
-    response_format={"type": "json_object"} для точного следования схеме.
-    """
+async def call_deepseek_json(system_prompt: str, user_prompt: str, max_tokens: int = 3500) -> dict:
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -554,21 +513,15 @@ async def call_deepseek_json(
             {"role": "user", "content": user_prompt},
         ],
         "stream": False,
+        "temperature": 0.0,
         "max_tokens": max_tokens,
-        "temperature": 0.5,
-        "response_format": {"type": "json_object"},
-        # ✅ Thinking Mode выключен
-        "thinking": {"type": "disabled"},
-        "reasoning_effort": "none",
     }
-
-    async with httpx.AsyncClient(timeout=150.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
         resp = await client.post(
             f"{DEEPSEEK_BASE_URL}/chat/completions",
             headers=headers,
             json=payload,
         )
-
     if resp.status_code != 200:
         body = resp.content.decode("utf-8", errors="replace")
         print(f"DeepSeek plan HTTP {resp.status_code}, body: {body[:1000]}")
@@ -585,7 +538,6 @@ async def call_deepseek_json(
             status_code=502,
             detail=f"No choices in response. Keys: {list(data.keys())}",
         )
-
     choice = data["choices"][0]
     message = choice.get("message", {})
     content = message.get("content", "")
@@ -771,8 +723,7 @@ async def classify_topic(query: str) -> bool:
     )
     messages = [{"role": "user", "content": prompt}]
     try:
-        # ✅ Thinking Mode уже отключён глобально в call_deepseek
-        result = await call_deepseek(messages, max_tokens=10)
+        result = await call_deepseek(messages, max_tokens=5)
         return "YES" in result.strip().upper()
     except Exception as e:
         print(f"Classifier error: {e}")
@@ -784,7 +735,7 @@ async def classify_topic(query: str) -> bool:
 def build_system_prompt(request_type: str) -> tuple[str, int]:
     """
     Возвращает (system_prompt, max_tokens) в зависимости от типа запроса.
-    Все промпты переписаны под deepseek-flash с требованием конкретики.
+    Все промпты переписаны под deepseek-chat с требованием конкретики.
     """
     is_culture_request = request_type in ("care", "pests", "diseases")
 
@@ -1068,6 +1019,7 @@ async def ask(req: AskRequest):
     if context_lines:
         user_content = "\n".join(context_lines) + f"\n\nВопрос: {req.query}"
     else:
+        # Старое поведение — если клиент прислал только query и context
         user_content = req.query
         if req.context:
             user_content = f"Контекст: {req.context}\n\nВопрос: {req.query}"
@@ -1145,7 +1097,7 @@ def admin_stats(_: None = None, x_admin_token: Optional[str] = Header(None)):
     return {
         "uptime_seconds": uptime_sec,
         "uptime_human": _format_uptime(uptime_sec),
-        "server_started_at": datetime.fromtimestamp(SERVER_STARTED_AT, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
+        "server_started_at": datetime.utcfromtimestamp(SERVER_STARTED_AT).isoformat() + "Z",
         "counters": dict(metrics),
         "active_devices_24h": len([d for d, r in daily_usage.items() if r.get("count", 0) > 0]),
         "upstreams": dict(upstream_health),
@@ -1163,7 +1115,7 @@ def admin_health(
     if force:
         check_upstreams_now()
     return {
-        "checked_at": now_iso(),
+        "checked_at": datetime.utcnow().isoformat() + "Z",
         "upstreams": dict(upstream_health),
     }
 
@@ -1194,6 +1146,7 @@ async def generate_plan(req: PlanRequest):
     cached = plan_cache.get(cache_key_str)
     if cached and (now_ts - cached["cached_at"]) < PLAN_CACHE_TTL_SECONDS:
         print(f"Plan cache HIT: {cache_key_str}")
+        # Cache HIT не списывает лимит (не тратит токены AI)
         used, limit = get_daily_usage(req.device_id, tz_offset)
         return _json_utf8_response({
             "tasks": cached["tasks"],
