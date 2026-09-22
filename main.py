@@ -242,8 +242,12 @@ class AskRequest(BaseModel):
     query: str
     context: Optional[str] = ""
     device_id: Optional[str] = "unknown"
-    request_type: Optional[str] = "free"
+    request_type: Optional[str] = "free"   # "care" | "pests" | "diseases" | "free"
     timezone_offset_minutes: Optional[int] = 0
+    # Контекст культуры (передаётся клиентом для более точных ответов)
+    culture_name: Optional[str] = ""       # "Яблоня"
+    variety: Optional[str] = ""            # "Антоновка"
+    region_zone: Optional[int] = 0         # USDA 1-9, 0 = не указано
 
 
 class AskPhotoRequest(BaseModel):
@@ -977,9 +981,35 @@ async def ask(req: AskRequest):
 
     system_prompt, max_tokens_for_request = build_system_prompt(req.request_type or "free")
 
-    user_content = req.query
-    if req.context:
-        user_content = f"Контекст: {req.context}\n\nВопрос: {req.query}"
+    # Формируем user_prompt с учётом контекста культуры и региона
+    context_lines = []
+
+    if req.culture_name:
+        context_lines.append(f"Культура: {req.culture_name}")
+    if req.variety:
+        context_lines.append(f"Сорт: {req.variety}")
+    if req.region_zone and 1 <= req.region_zone <= 9:
+        zone_names = {
+            1: "Якутия, Оймякон (до −46 °C)",
+            2: "Новосибирск, Красноярск (−46…−40 °C)",
+            3: "Архангельск, Мурманск, Камчатка (−40…−34 °C)",
+            4: "Хабаровск, Иркутск, Кемерово (−34…−29 °C)",
+            5: "Москва, Урал, Поволжье (−29…−23 °C)",
+            6: "Воронеж, Калининград, Курск (−23…−18 °C)",
+            7: "Ростов-на-Дону, Ставрополь (−18…−12 °C)",
+            8: "Астрахань, Волгоград, Кавказ (−12…−7 °C)",
+            9: "Сочи, Ялта, Крым (−7…−1 °C)",
+        }
+        zone_name = zone_names.get(req.region_zone, f"зона {req.region_zone}")
+        context_lines.append(f"Климатическая зона USDA: {req.region_zone} ({zone_name})")
+
+    if context_lines:
+        user_content = "\n".join(context_lines) + f"\n\nВопрос: {req.query}"
+    else:
+        # Старое поведение — если клиент прислал только query и context
+        user_content = req.query
+        if req.context:
+            user_content = f"Контекст: {req.context}\n\nВопрос: {req.query}"
 
     messages = [
         {"role": "system", "content": system_prompt},
