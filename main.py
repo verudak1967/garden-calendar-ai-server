@@ -1224,7 +1224,6 @@ async def ask(req: AskRequest):
             )
 
     tz_offset = req.timezone_offset_minutes or 0
-    used, limit = increment_daily_usage(req.device_id, tz_offset)
 
     key = cache_key(
         query=req.query,
@@ -1233,9 +1232,20 @@ async def ask(req: AskRequest):
         variety=req.variety or "",
         region_zone=req.region_zone or 0,
     )
+
+    # 1. Сначала проверяем кэш — cache HIT лимит не тратит
     if key in server_cache:
         metrics["cache_hits"] += 1
-        return AiResponse(text=server_cache[key], used=used, limit=limit, model=DEEPSEEK_MODEL + " (cache)")
+        used, limit = get_daily_usage(req.device_id, tz_offset)   # только читаем, без increment
+        return AiResponse(
+            text=server_cache[key],
+            used=used,
+            limit=limit,
+            model=DEEPSEEK_MODEL + " (cache)"
+        )
+
+    # 2. Cache MISS — списываем 1 запрос из дневного лимита
+    used, limit = increment_daily_usage(req.device_id, tz_offset)
 
         # Для комнатных растений с типом "care" используем отдельный промпт
     if (req.request_type == "care") and is_indoor_plant(req.culture_name or ""):
