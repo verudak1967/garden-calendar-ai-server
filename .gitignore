@@ -2,3 +2,62 @@ __pycache__/
 *.pyc
 .env
 venv/
+
+# Временные файлы test.sh
+request.json
+response.json
+ask_*.json
+resp_*.json
+test*.json
+limit_*.json
+usage_test.json
+quality_*.json
+*.tmp
+
+# Изображения для тестов
+image.txt
+plant*.jpg
+plant*.txt
+small.jpg
+photo.*
+*.png
+*.jpg
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Прочее
+stats.json
+diagnostic.json
+diag.json
+t1.json
+t2.json
+t3.json
+t4.json
+t5.json
+t6.json
+t7.json
+t8.json
+check_*.json
+vision_*.txt
+# Тестовые файлы (создаются test.sh вручную и в старых запусках)
+*.json
+*.txt
+!requirements.txt
+
+# Картинки для тестов
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# Служебное
+*.bak
+*.tmp
+*.log
