@@ -63,10 +63,29 @@ import json
 try:
     with open('response.json', 'r', encoding='utf-8') as f:
         data = json.load(f)
-    print(json.dumps(data, ensure_ascii=False, indent=2))
-except Exception as e:
+except Exception:
     with open('response.json', 'r', encoding='utf-8', errors='replace') as f:
         print(f.read()[:2000])
+    raise SystemExit
+
+if isinstance(data, dict) and 'text' in data:
+    print('--- TEXT ---')
+    print(data['text'])
+    print()
+    print('--- META ---')
+    meta = {k: v for k, v in data.items() if k != 'text'}
+    print(json.dumps(meta, ensure_ascii=False, indent=2))
+elif isinstance(data, dict) and 'tasks' in data:
+    print('--- TASKS ---')
+    for t in data['tasks']:
+        print(f\"{t.get('month',0):02d}-{t.get('day',0):02d}  {t.get('title','')}\")
+        print(f\"           {t.get('description','')}\")
+    print()
+    print('--- META ---')
+    meta = {k: v for k, v in data.items() if k != 'tasks'}
+    print(json.dumps(meta, ensure_ascii=False, indent=2))
+else:
+    print(json.dumps(data, ensure_ascii=False, indent=2))
 "
 }
 
@@ -100,22 +119,57 @@ test_usage() {
     send_request GET "/api/usage?device_id=$DEVICE_ID&timezone_offset_minutes=180" "" "Счётчик лимитов"
 }
 
+# === Тест: яблоня (дерево — должны быть обрезка и подготовка к зиме) ===
+test_ask_apple() {
+    make_json request.json '{"query":"Расскажи про уход за культурой: Яблоня","request_type":"care","device_id":"'"$DEVICE_ID"'","timezone_offset_minutes":180,"culture_name":"Яблоня","variety":"Антоновка","region_zone":5}'
+    send_request POST /api/ask request.json "Уход за яблоней (дерево — нужны обрезка и зимовка)"
+}
+
+# === Тест: фикус (комнатное — без зимовки, без сортов) ===
+test_ask_ficus() {
+    make_json request.json '{"query":"Расскажи про уход за культурой: Фикус Бенджамина","request_type":"care","device_id":"'"$DEVICE_ID"'","timezone_offset_minutes":180,"culture_name":"Фикус Бенджамина","region_zone":5}'
+    send_request POST /api/ask request.json "Уход за фикусом (комнатное — БЕЗ зимовки и сортов)"
+}
+
+# === Тест: огурец, болезни (проверяем diseases + однолетник) ===
+test_ask_cucumber() {
+    make_json request.json '{"query":"Какие болезни бывают у культуры: Огурец? Как лечить?","request_type":"diseases","device_id":"'"$DEVICE_ID"'","timezone_offset_minutes":180,"culture_name":"Огурец","region_zone":5}'
+    send_request POST /api/ask request.json "Болезни огурца (однолетник, diseases)"
+}
+
+# === Тест: томат, болезни (проверяем diseases + устойчивые сорта) ===
+test_ask_tomato_diseases() {
+    make_json request.json '{"query":"Какие болезни бывают у культуры: Томат? Как лечить?","request_type":"diseases","device_id":"'"$DEVICE_ID"'","timezone_offset_minutes":180,"culture_name":"Томат","region_zone":5}'
+    send_request POST /api/ask request.json "Болезни томата (diseases)"
+}
+
 # === Точка входа ===
 case "${1:-all}" in
-    ask)    test_ask ;;
-    care)   test_ask_care ;;
-    photo)  test_photo ;;
-    plan)   test_plan ;;
-    usage)  test_usage ;;
+    ask)      test_ask ;;
+    care)     test_ask_care ;;
+    photo)    test_photo ;;
+    plan)     test_plan ;;
+    usage)    test_usage ;;
+    # НОВЫЕ тесты для проверки адаптивности промптов:
+    apple)    test_ask_apple ;;
+    ficus)    test_ask_ficus ;;
+    cucumber) test_ask_cucumber ;;
+    tomato-dis) test_ask_tomato_diseases ;;
     all)
         test_ask
         test_ask_care
         test_plan
         test_usage
-        # test_photo  # ← раскомментируй, если хочешь проверить vision
+        ;;
+    adaptive)
+        echo ">>> Проверка адаптивности промптов (4 типа культур) <<<"
+        test_ask_care           # томат — однолетник
+        test_ask_apple          # яблоня — дерево
+        test_ask_ficus          # фикус — комнатное
+        test_ask_cucumber       # огурец — болезни
         ;;
     *)
-        echo "Использование: $0 [ask|care|photo|plan|usage|all]"
+        echo "Использование: $0 [ask|care|photo|plan|usage|apple|ficus|cucumber|tomato-dis|adaptive|all]"
         exit 1
         ;;
 esac
