@@ -1107,9 +1107,9 @@ async def ask(req: AskRequest):
         variety=req.variety or "",
         region_zone=req.region_zone or 0,
     )
-if key in server_cache:
-    metrics["cache_hits"] += 1
-    return AiResponse(text=server_cache[key], used=used, limit=limit, model=DEEPSEEK_MODEL + " (cache)")
+    if key in server_cache:
+        metrics["cache_hits"] += 1
+        return AiResponse(text=server_cache[key], used=used, limit=limit, model=DEEPSEEK_MODEL + " (cache)")
 
     system_prompt, max_tokens_for_request = build_system_prompt(req.request_type or "free")
 
