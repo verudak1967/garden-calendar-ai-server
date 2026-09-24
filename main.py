@@ -25,48 +25,35 @@ app.add_middleware(
 # === Провайдер для текста (DeepSeek) ===
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-
-# ✅ ОБНОВЛЕНО: используется актуальная модель deepseek-flash
-#    (deepseek-chat мёртв с 24.07.2026; deepseek-v4-pro — legacy-алиас)
-#    Режим размышлений ВЫКЛЮЧЕН принудительно во всех вызовах.
 DEEPSEEK_MODEL = "deepseek-flash"
 DEEPSEEK_MODEL_PLAN = "deepseek-flash"
 
-# === Провайдер для vision (OpenRouter) ===
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+# === Провайдер для vision (AITUNNEL) ===
+AITUNNEL_API_KEY = os.getenv("AITUNNEL_API_KEY")
+AITUNNEL_BASE_URL = "https://api.aitunnel.ru/v1"
+AITUNNEL_VISION_MODELS = [
+    "gemini-2.5-flash",            # основная: точная и недорогая
+    "gpt-4o",                     # резерв 1: проверенная
+    "claude-sonnet-4.6",          # резерв 2: для сложных случаев
+    "deepseek-v4-flash-vision-exp" # резерв 3: экономичная
+]
 
 # === Публичный Statuspage платформы Render ===
 RENDER_STATUS_URL = "https://status.render.com/api/v2/status.json"
 
-OPENROUTER_VISION_MODELS = [
-    "inclusionai/ling-3.0-flash-vl:free",
-    "google/gemma-4-31b-it:free",
-    "google/gemma-4-26b-a4b-it:free",
-    "nex-agi/nex-n2.5-pro:free",
-    "nex-agi/nex-n2.5-mini:free",
-    "dots-studio/dots-3-note-preview:free",
-    "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-    "thinkingmachines/inkling-small:free",
-    "qwen/qwen2.5-vl-32b-instruct:free",
-    "openrouter/free",
-]
-
 if not DEEPSEEK_API_KEY:
     raise RuntimeError("DEEPSEEK_API_KEY environment variable is not set")
-if not OPENROUTER_API_KEY:
-    raise RuntimeError("OPENROUTER_API_KEY environment variable is not set")
+if not AITUNNEL_API_KEY:
+    raise RuntimeError("AITUNNEL_API_KEY environment variable is not set")
 
 
 # ========== УТИЛИТЫ ==========
 
 def now_iso() -> str:
-    """✅ Замена устаревшего datetime.utcnow()."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def decode_json_response(resp) -> dict:
-    """Принудительно декодирует ответ как UTF-8."""
     try:
         return json.loads(resp.content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError):
@@ -74,10 +61,6 @@ def decode_json_response(resp) -> dict:
 
 
 def _json_utf8_response(data: dict) -> Response:
-    """
-    Отдаёт JSON-ответ с явным UTF-8, обходя Pydantic-сериализацию.
-    Решает проблему двойного перекодирования (UTF-8 → CP1251 → UTF-8).
-    """
     body_bytes = json.dumps(data, ensure_ascii=False).encode("utf-8")
     return Response(
         content=body_bytes,
@@ -101,7 +84,7 @@ metrics = {
 
 vision_model_stats: dict = {
     m: {"success": 0, "fail": 0, "last_used_ts": None, "last_error": None}
-    for m in OPENROUTER_VISION_MODELS
+    for m in AITUNNEL_VISION_MODELS
 }
 
 error_log: deque = deque(maxlen=50)
@@ -127,7 +110,7 @@ plan_cache: dict = {}
 
 upstream_health: dict = {
     "deepseek": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
-    "openrouter": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
+    "aitunnel": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
     "render": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
 }
 
@@ -157,29 +140,29 @@ def _ping_deepseek() -> None:
         print(f"Upstream DeepSeek: exception {e}")
 
 
-def _ping_openrouter() -> None:
+def _ping_aitunnel() -> None:
     start = time.time()
     try:
         with httpx.Client(timeout=15.0) as client:
             resp = client.get(
-                f"{OPENROUTER_BASE_URL}/models",
-                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}"},
+                f"{AITUNNEL_BASE_URL}/models",
+                headers={"Authorization": f"Bearer {AITUNNEL_API_KEY}"},
             )
         latency = int((time.time() - start) * 1000)
         now = now_iso()
         if resp.status_code == 200:
-            upstream_health["openrouter"] = {"status": "ok", "latency_ms": latency,
-                                              "checked_at": now, "error": None}
-            print(f"Upstream OpenRouter: OK ({latency}ms)")
+            upstream_health["aitunnel"] = {"status": "ok", "latency_ms": latency,
+                                            "checked_at": now, "error": None}
+            print(f"Upstream AITUNNEL: OK ({latency}ms)")
         else:
-            upstream_health["openrouter"] = {"status": "error", "latency_ms": latency,
-                                              "checked_at": now, "error": f"HTTP {resp.status_code}"}
-            print(f"Upstream OpenRouter: HTTP {resp.status_code}")
+            upstream_health["aitunnel"] = {"status": "error", "latency_ms": latency,
+                                            "checked_at": now, "error": f"HTTP {resp.status_code}"}
+            print(f"Upstream AITUNNEL: HTTP {resp.status_code}")
     except Exception as e:
         now = now_iso()
-        upstream_health["openrouter"] = {"status": "error", "latency_ms": None,
-                                          "checked_at": now, "error": str(e)[:200]}
-        print(f"Upstream OpenRouter: exception {e}")
+        upstream_health["aitunnel"] = {"status": "error", "latency_ms": None,
+                                        "checked_at": now, "error": str(e)[:200]}
+        print(f"Upstream AITUNNEL: exception {e}")
 
 
 def _ping_render() -> None:
@@ -192,7 +175,6 @@ def _ping_render() -> None:
         if resp.status_code != 200:
             upstream_health["render"] = {"status": "error", "latency_ms": latency,
                                           "checked_at": now, "error": f"Statuspage HTTP {resp.status_code}"}
-            print(f"Upstream Render: Statuspage HTTP {resp.status_code}")
             return
         data = decode_json_response(resp)
         indicator = data.get("status", {}).get("indicator", "unknown")
@@ -200,21 +182,18 @@ def _ping_render() -> None:
         if indicator == "none":
             upstream_health["render"] = {"status": "ok", "latency_ms": latency,
                                           "checked_at": now, "error": None}
-            print(f"Upstream Render: OK ({latency}ms) — {description}")
         else:
             upstream_health["render"] = {"status": "error", "latency_ms": latency,
                                           "checked_at": now, "error": description or f"indicator={indicator}"}
-            print(f"Upstream Render: {indicator} — {description}")
     except Exception as e:
         now = now_iso()
         upstream_health["render"] = {"status": "error", "latency_ms": None,
                                       "checked_at": now, "error": str(e)[:200]}
-        print(f"Upstream Render: exception {e}")
 
 
 def check_upstreams_now() -> None:
     t1 = threading.Thread(target=_ping_deepseek, daemon=True)
-    t2 = threading.Thread(target=_ping_openrouter, daemon=True)
+    t2 = threading.Thread(target=_ping_aitunnel, daemon=True)
     t3 = threading.Thread(target=_ping_render, daemon=True)
     t1.start(); t2.start(); t3.start()
     t1.join(timeout=20); t2.join(timeout=20); t3.join(timeout=20)
@@ -251,7 +230,7 @@ class AskRequest(BaseModel):
     query: str
     context: Optional[str] = ""
     device_id: Optional[str] = "unknown"
-    request_type: Optional[str] = "free"   # "care" | "pests" | "diseases" | "free"
+    request_type: Optional[str] = "free"
     timezone_offset_minutes: Optional[int] = 0
     culture_name: Optional[str] = ""
     variety: Optional[str] = ""
@@ -377,6 +356,7 @@ SHORT_GARDEN_WORDS = {
     "плод", "плода", "плоды", "плодом",
 }
 
+
 INDOOR_PLANT_MARKERS = [
     "фикус", "орхиде", "монстер", "сансевиер", "суккулент", "кактус",
     "алоэ", "толстянк", "крассул", "драцен", "юкк", "пальм", "хамедоре",
@@ -390,11 +370,11 @@ INDOOR_PLANT_MARKERS = [
 
 
 def is_indoor_plant(culture_name: str) -> bool:
-    """Определяет, комнатное ли растение по названию."""
     if not culture_name:
         return False
     name = culture_name.lower()
     return any(marker in name for marker in INDOOR_PLANT_MARKERS)
+
 
 def has_short_garden_term(query: str) -> bool:
     words = re.findall(r"[а-яёa-z]+", query.lower())
@@ -490,12 +470,6 @@ async def call_deepseek(
     max_tokens: int = 4000,
     temperature: float = 0.5,
 ) -> str:
-    """
-    ✅ ОБНОВЛЕНО под deepseek-flash:
-    - Режим размышлений (thinking) ОТКЛЮЧЁН принудительно.
-    - reasoning_effort="none" + thinking={"type":"disabled"}.
-    - temperature работает, т.к. thinking отключён.
-    """
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -507,7 +481,6 @@ async def call_deepseek(
         "stream": False,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        # ✅ Thinking Mode выключен
         "thinking": {"type": "disabled"},
         "reasoning_effort": "none",
     }
@@ -557,10 +530,6 @@ async def call_deepseek_json(
     user_prompt: str,
     max_tokens: int = 4000,
 ) -> dict:
-    """
-    ✅ ОБНОВЛЕНО: deepseek-flash без размышлений,
-    response_format={"type": "json_object"} для точного следования схеме.
-    """
     headers = {
         "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
         "Content-Type": "application/json",
@@ -575,7 +544,6 @@ async def call_deepseek_json(
         "max_tokens": max_tokens,
         "temperature": 0.5,
         "response_format": {"type": "json_object"},
-        # ✅ Thinking Mode выключен
         "thinking": {"type": "disabled"},
         "reasoning_effort": "none",
     }
@@ -702,28 +670,26 @@ def validate_plan_json(parsed: dict) -> List[dict]:
     return result
 
 
-# ========== OPENROUTER (vision) ==========
+# ========== AITUNNEL (vision) ==========
 
-async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tuple[str, str]:
+async def call_aitunnel_vision(messages: list, max_tokens: int = 2500) -> tuple[str, str]:
     headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Authorization": f"Bearer {AITUNNEL_API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://garden-calendar.app",
-        "X-Title": "Garden Calendar",
     }
 
     last_error = "no models tried"
 
-    for model_id in OPENROUTER_VISION_MODELS:
+    for model_id in AITUNNEL_VISION_MODELS:
         try:
             payload = {
                 "model": model_id,
                 "messages": messages,
                 "max_tokens": max_tokens,
             }
-            async with httpx.AsyncClient(timeout=90.0) as client:
+            async with httpx.AsyncClient(timeout=120.0) as client:
                 resp = await client.post(
-                    f"{OPENROUTER_BASE_URL}/chat/completions",
+                    f"{AITUNNEL_BASE_URL}/chat/completions",
                     headers=headers,
                     json=payload,
                 )
@@ -744,6 +710,14 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tupl
                     vision_model_stats[model_id]["last_error"] = "no choices"
                     continue
 
+            elif resp.status_code == 429:
+                print(f"Model {model_id} rate limited (429), trying next...")
+                last_error = f"{model_id}: 429"
+                vision_model_stats[model_id]["fail"] += 1
+                vision_model_stats[model_id]["last_error"] = "HTTP 429 (rate limit)"
+                log_error("aitunnel", f"{model_id}: rate limit 429")
+                continue
+
             elif resp.status_code in (404, 402):
                 print(f"Model {model_id} unavailable ({resp.status_code}), trying next...")
                 last_error = f"{model_id}: {resp.status_code}"
@@ -756,7 +730,7 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tupl
                 last_error = f"{model_id}: {resp.status_code}"
                 vision_model_stats[model_id]["fail"] += 1
                 vision_model_stats[model_id]["last_error"] = f"HTTP {resp.status_code}"
-                log_error("openrouter", f"{model_id}: HTTP {resp.status_code}")
+                log_error("aitunnel", f"{model_id}: HTTP {resp.status_code}")
                 continue
 
         except Exception as e:
@@ -764,7 +738,7 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tupl
             last_error = f"{model_id}: exception {e}"
             vision_model_stats[model_id]["fail"] += 1
             vision_model_stats[model_id]["last_error"] = str(e)[:200]
-            log_error("openrouter", f"{model_id}: exception {e}")
+            log_error("aitunnel", f"{model_id}: exception {e}")
             continue
 
     raise HTTPException(
@@ -777,7 +751,7 @@ async def call_openrouter_vision(messages: list, max_tokens: int = 1500) -> tupl
 
 async def classify_topic(query: str) -> bool:
     prompt = (
-        "Ты — фильтр для приложения «Садовый календарь». "
+        "Ты — фильтр для приложения «AI Ботаник». "
         "Приложение принимает ЛЮБЫЕ запросы про: садоводство, огородничество, "
         "комнатные и садовые растения, ягоды, фрукты, овощи, деревья, кустарники, "
         "болезни и вредителей растений, уход за растениями, удобрения и подкормки, "
@@ -789,7 +763,6 @@ async def classify_topic(query: str) -> bool:
     )
     messages = [{"role": "user", "content": prompt}]
     try:
-        # ✅ Thinking Mode уже отключён глобально в call_deepseek
         result = await call_deepseek(messages, max_tokens=10)
         return "YES" in result.strip().upper()
     except Exception as e:
@@ -799,93 +772,7 @@ async def classify_topic(query: str) -> bool:
 
 # ========== СБОРКА ПРОМПТА ДЛЯ /api/ask ==========
 
-def build_indoor_care_prompt() -> tuple[str, int]:
-    """
-    Отдельный промпт для КОМНАТНЫХ растений.
-    Строго 5 разделов. Никаких сортов, зимовки, сбора урожая.
-    """
-    max_tokens = 4000
-    system_prompt = (
-        "Ты — опытный растениевод, специализация: комнатные растения "
-        "и уход в квартире.\n\n"
-        "Пользователь просит рассказать про УХОД за КОМНАТНЫМ растением.\n\n"
-        "⛔ СТРУКТУРА ЖЁСТКО ЗАФИКСИРОВАНА. Разрешены ТОЛЬКО эти 5 разделов:\n\n"
-        "## Полив\n"
-        "- Объём воды (л или мл), частота, требования к воде (отстоянная, "
-        "комнатной температуры), признаки перелива и недолива.\n"
-        "- Влажность воздуха, опрыскивание, душ (если применимо).\n\n"
-        "## Подкормка\n"
-        "- Конкретные удобрения с дозировками (г/л или мл/л), частота, "
-        "сезонность (активный рост / покой).\n"
-        "- Что даёт азот/фосфор/калий для комнатных.\n\n"
-        "## Обрезка и формировка\n"
-        "- Когда формировать (весна–лето), прищипка, удаление сухих листьев.\n"
-        "- Обработка срезов.\n\n"
-        "## Мульчирование и рыхление\n"
-        "- Мульча (кокосовое волокно, керамзит, декоративные камешки), "
-        "толщина слоя.\n"
-        "- Рыхление верхнего слоя, замена верхнего грунта.\n\n"
-        "## Профилактика болезней и вредителей\n"
-        "- Основные вредители комнатных (щитовка, паутинный клещ, трипс, "
-        "мучнистый червец).\n"
-        "- Конкретные препараты с дозировками.\n"
-        "- Гигиена (протирание листьев, влажность, проветривание).\n\n"
-        "⛔ ЗАПРЕЩЕНО СОЗДАВАТЬ ЗАГОЛОВКИ:\n"
-        "- ## Сбор урожая и хранение\n"
-        "- ## Перспективные сорта\n"
-        "- ## Подготовка к зиме\n"
-        "- Любые другие разделы, кроме 5 разрешённых выше.\n\n"
-        "Если тема не применима — просто не создавай раздел, "
-        "не пиши 'не применимо', не пиши 'раздел отсутствует'. "
-        "Просто пропусти его.\n\n"
-        "ЖЁСТКИЕ ТРЕБОВАНИЯ:\n"
-        "1. Конкретика: препарат + дозировка + срок.\n"
-        "2. Не более 3500 символов.\n"
-        "3. Без вступлений и заключений.\n"
-        "4. Жирным (**текст**) — только препараты и ключевые термины.\n\n"
-        "ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА (фикус Бенджамина):\n"
-        "## Полив\n"
-        "- Отстоянная вода комнатной температуры (+20…+24 °C), "
-        "0,5–1 л на растение среднего размера.\n"
-        "- Летом — раз в 5–7 дней, зимой — раз в 10–14 дней, "
-        "после просыхания верхних 3–4 см грунта.\n"
-        "- Перелив опаснее недолива: пожелтение и опадение нижних листьев.\n"
-        "- Раз в месяц — душ +30 °C, листья протирать влажной тканью.\n\n"
-        "## Подкормка\n"
-        "- Март–сентябрь: **Фертика Люкс** 1 г/л или **Агрикола для "
-        "фикусов** 1 колпачок/1 л каждые 14 дней.\n"
-        "- Октябрь–февраль: подкормки прекратить или половинная доза "
-        "раз в месяц.\n\n"
-        "## Обрезка и формировка\n"
-        "- Формирующая — март–июнь, до активного роста.\n"
-        "- Прищипка верхушек над 5–6-м листом для ветвления.\n"
-        "- Санитарная — в любое время: сухие, оголённые, растущие внутрь ветки.\n"
-        "- Срезы — толчёный уголь или **Корневин**.\n\n"
-        "## Мульчирование и рыхление\n"
-        "- Мульча: кокосовое волокно, керамзит, декоративные камешки "
-        "слоем 1–2 см.\n"
-        "- Рыхление верхнего слоя на 1–2 см раз в 2 недели.\n"
-        "- Раз в год — замена верхних 2–3 см грунта на свежий.\n\n"
-        "## Профилактика болезней и вредителей\n"
-        "- Осмотр листьев с нижней стороны раз в неделю "
-        "(щитовка, клещ, трипс).\n"
-        "- При клеще: **Фитоверм** 2 мл/1 л, 3 опрыскивания "
-        "с интервалом 5 дней.\n"
-        "- При щитовке: **Актара** 1 г/1 л под корень + механическое "
-        "удаление щитков.\n"
-        "- Влажность 50–60%, не ставить у отопительных приборов.\n\n"
-        "(продолжай в том же стиле)"
-    )
-    return system_prompt, max_tokens
-
-# === ЗАМЕНА НАЧАЛО: build_system_prompt ===
-
 def build_system_prompt(request_type: str) -> tuple[str, int]:
-    """
-    Возвращает (system_prompt, max_tokens) для типа запроса.
-    Промпты АДАПТИВНЫЕ — модель сама выбирает разделы под тип культуры.
-    """
-
     if request_type == "care":
         max_tokens = 8000
         system_prompt = (
@@ -966,11 +853,13 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
             "## Перспективные сорта\n"
             "- **Санька** — ультраранний, устойчив к фитофторозу, открытый грунт.\n"
             "- **Батяня** — крупноплодный, для теплиц.\n"
-            "- **Красная гроздь F1** — кистевой, дружное созревание.\n"
-            "- **Президент II** — ранний, холодостойкий.\n"
-            "- **Джина TST** — крупноплодный, устойчив к кладоспориозу.\n"
-            "- **Катя F1** — суперранний, дружное созревание.\n"
-            "- **Пузата хата** — салатный, крупноплодный.\n\n"
+            "- **Красная гроздь F1** — кистевой, дружное созревание, универсальный.\n"
+            "- **Президент II** — ранний, холодостойкий, открытый грунт.\n"
+            "- **Джина TST** — крупноплодный, устойчив к кладоспориозу, теплица.\n"
+            "- **Катя F1** — суперранний, дружное созревание, открытый грунт.\n"
+            "- **Пузата хата** — салатный, крупноплодный, теплица.\n"
+            "- **Толстой F1** — ранний, устойчив к ВТМ и фузариозу, универсальный.\n"
+            "- **Черри Блоссом F1** — черри, устойчив к растрескиванию, теплица.\n\n"
             "(продолжай в том же стиле, адаптируя разделы под культуру)\n\n"
             "ПРИМЕР ДЛЯ ЯБЛОНИ (дерево — С 'Обрезкой' и 'Подготовкой к зиме'):\n"
             "## Полив\n"
@@ -997,8 +886,13 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
             "- Съёмная спелость — конец августа–сентябрь.\n"
             "- Хранение: +2…+4 °C, влажность 90%, до 5 месяцев.\n\n"
             "## Перспективные сорта\n"
-            "- **Имрус** — иммунный к парше.\n"
-            "- **Орлик** — зимний, скороплодный.\n\n"
+            "- **Имрус** — иммунный к парше, зимний, скороплодный.\n"
+            "- **Орлик** — зимний, скороплодный.\n"
+            "- **Болотовское** — иммунный к парше, крупноплодный, лёжкий.\n"
+            "- **Коваленковское** — раннезимний, устойчив к комплексу болезней.\n"
+            "- **Строевское** — позднезимний, иммунный к парше.\n"
+            "- **Веньяминовское** — позднеосенний, устойчив к парше.\n"
+            "- **Афродита** — раннезимний, скороплодный.\n\n"
             "(продолжай в том же стиле)"
         )
         return system_prompt, max_tokens
@@ -1055,7 +949,10 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
             "- **Черная вуаль** — толерантна к стекляннице.\n"
             "- **Бирюлевская** — устойчива к почковому клещу.\n"
             "- **Ядрёная** — толерантна к тле и клещу.\n"
-            "- **Литвиновская** — устойчива к стекляннице.\n\n"
+            "- **Литвиновская** — устойчива к стекляннице.\n"
+            "- **Голубка** — устойчива к антракнозу и тле.\n"
+            "- **Памяти Мичурина** — толерантна к почковому клещу.\n"
+            "- **Кипиана** — устойчива к мучнистой росе и тле.\n\n"
             "(продолжай в том же стиле, адаптируя разделы под культуру)"
         )
         return system_prompt, max_tokens
@@ -1110,7 +1007,9 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
             "- **Президент II** — устойчив к фитофторозу и бурой пятнистости.\n"
             "- **Катя F1** — устойчив к кладоспориозу и фузариозу.\n"
             "- **Розовый мёд** — устойчив к фитофторозу.\n"
-            "- **Черри Лиза F1** — устойчив к кладоспориозу и ВТМ.\n\n"
+            "- **Черри Лиза F1** — устойчив к кладоспориозу и ВТМ.\n"
+            "- **Толстой F1** — устойчив к ВТМ и фузариозу.\n"
+            "- **Пузата хата** — устойчив к кладоспориозу.\n\n"
             "(продолжай в том же стиле)"
         )
         return system_prompt, max_tokens
@@ -1128,12 +1027,12 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
         "- Внутри разделов — маркированные или нумерованные списки.\n"
         "- Если вопрос про растение — определи тип (однолетник, многолетник, "
         "кустарник, дерево, комнатное) и включай ТОЛЬКО применимые разделы. "
+        "Для однолетника НЕ пиши про зимовку и обрезку кроны.\n"
         "- Если вопрос про ОВОЩНУЮ, ЯГОДНУЮ или ПЛОДОВУЮ культуру — обязательно "
         "добавь раздел `## Перспективные сорта` с 7–10 новыми (2020–2026) "
         "сортами и краткой характеристикой.\n"
         "- Если вопрос про КОМНАТНОЕ растение — раздел `## Перспективные сорта` "
         "ЗАПРЕЩЁН, пропусти его полностью.\n"
-        "Для однолетника НЕ пиши про зимовку и обрезку кроны.\n"
         "- Если вопрос про препарат — укажи действующее вещество, дозировку, "
         "период ожидания до сбора урожая, совместимость.\n"
         "- Если вопрос про болезнь или вредителя — признаки, условия развития, "
@@ -1163,7 +1062,81 @@ def build_system_prompt(request_type: str) -> tuple[str, int]:
     )
     return system_prompt, max_tokens
 
-# === ЗАМЕНА КОНЕЦ: build_system_prompt ===
+
+def build_indoor_care_prompt() -> tuple[str, int]:
+    max_tokens = 4000
+    system_prompt = (
+        "Ты — опытный растениевод, специализация: комнатные растения "
+        "и уход в квартире.\n\n"
+        "Пользователь просит рассказать про УХОД за КОМНАТНЫМ растением.\n\n"
+        "⛔ СТРУКТУРА ЖЁСТКО ЗАФИКСИРОВАНА. Разрешены ТОЛЬКО эти 5 разделов:\n\n"
+        "## Полив\n"
+        "- Объём воды (л или мл), частота, требования к воде (отстоянная, "
+        "комнатной температуры), признаки перелива и недолива.\n"
+        "- Влажность воздуха, опрыскивание, душ (если применимо).\n\n"
+        "## Подкормка\n"
+        "- Конкретные удобрения с дозировками (г/л или мл/л), частота, "
+        "сезонность (активный рост / покой).\n"
+        "- Что даёт азот/фосфор/калий для комнатных.\n\n"
+        "## Обрезка и формировка\n"
+        "- Когда формировать (весна–лето), прищипка, удаление сухих листьев.\n"
+        "- Обработка срезов.\n\n"
+        "## Мульчирование и рыхление\n"
+        "- Мульча (кокосовое волокно, керамзит, декоративные камешки), "
+        "толщина слоя.\n"
+        "- Рыхление верхнего слоя, замена верхнего грунта.\n\n"
+        "## Профилактика болезней и вредителей\n"
+        "- Основные вредители комнатных (щитовка, паутинный клещ, трипс, "
+        "мучнистый червец).\n"
+        "- Конкретные препараты с дозировками.\n"
+        "- Гигиена (протирание листьев, влажность, проветривание).\n\n"
+        "⛔ ЗАПРЕЩЕНО СОЗДАВАТЬ ЗАГОЛОВКИ:\n"
+        "- ## Сбор урожая и хранение\n"
+        "- ## Перспективные сорта\n"
+        "- ## Подготовка к зиме\n"
+        "- Любые другие разделы, кроме 5 разрешённых выше.\n\n"
+        "Если тема не применима — просто не создавай раздел, "
+        "не пиши 'не применимо', не пиши 'раздел отсутствует'. "
+        "Просто пропусти его.\n\n"
+        "ЖЁСТКИЕ ТРЕБОВАНИЯ:\n"
+        "1. Конкретика: препарат + дозировка + срок.\n"
+        "2. Не более 3500 символов.\n"
+        "3. Без вступлений и заключений.\n"
+        "4. Жирным (**текст**) — только препараты и ключевые термины.\n\n"
+        "ПРИМЕР ПРАВИЛЬНОГО ОТВЕТА (фикус Бенджамина):\n"
+        "## Полив\n"
+        "- Отстоянная вода комнатной температуры (+20…+24 °C), "
+        "0,5–1 л на растение среднего размера.\n"
+        "- Летом — раз в 5–7 дней, зимой — раз в 10–14 дней, "
+        "после просыхания верхних 3–4 см грунта.\n"
+        "- Перелив опаснее недолива: пожелтение и опадение нижних листьев.\n"
+        "- Раз в месяц — душ +30 °C, листья протирать влажной тканью.\n\n"
+        "## Подкормка\n"
+        "- Март–сентябрь: **Фертика Люкс** 1 г/л или **Агрикола для "
+        "фикусов** 1 колпачок/1 л каждые 14 дней.\n"
+        "- Октябрь–февраль: подкормки прекратить или половинная доза "
+        "раз в месяц.\n\n"
+        "## Обрезка и формировка\n"
+        "- Формирующая — март–июнь, до активного роста.\n"
+        "- Прищипка верхушек над 5–6-м листом для ветвления.\n"
+        "- Санитарная — в любое время: сухие, оголённые, растущие внутрь ветки.\n"
+        "- Срезы — толчёный уголь или **Корневин**.\n\n"
+        "## Мульчирование и рыхление\n"
+        "- Мульча: кокосовое волокно, керамзит, декоративные камешки "
+        "слоем 1–2 см.\n"
+        "- Рыхление верхнего слоя на 1–2 см раз в 2 недели.\n"
+        "- Раз в год — замена верхних 2–3 см грунта на свежий.\n\n"
+        "## Профилактика болезней и вредителей\n"
+        "- Осмотр листьев с нижней стороны раз в неделю "
+        "(щитовка, клещ, трипс).\n"
+        "- При клеще: **Фитоверм** 2 мл/1 л, 3 опрыскивания "
+        "с интервалом 5 дней.\n"
+        "- При щитовке: **Актара** 1 г/1 л под корень + механическое "
+        "удаление щитков.\n"
+        "- Влажность 50–60%, не ставить у отопительных приборов.\n\n"
+        "(продолжай в том же стиле)"
+    )
+    return system_prompt, max_tokens
 
 
 # ========== ПРОМПТ ДЛЯ ГЕНЕРАЦИИ ПЛАНА ==========
@@ -1196,7 +1169,7 @@ def build_plan_prompt() -> str:
 
 @app.get("/")
 def health():
-    return {"status": "ok", "service": "garden-calendar-ai"}
+    return {"status": "ok", "service": "ai-botanik"}
 
 
 @app.get("/api/usage", response_model=UsageResponse)
@@ -1236,7 +1209,7 @@ async def ask(req: AskRequest):
     # 1. Сначала проверяем кэш — cache HIT лимит не тратит
     if key in server_cache:
         metrics["cache_hits"] += 1
-        used, limit = get_daily_usage(req.device_id, tz_offset)   # только читаем, без increment
+        used, limit = get_daily_usage(req.device_id, tz_offset)
         return AiResponse(
             text=server_cache[key],
             used=used,
@@ -1247,14 +1220,13 @@ async def ask(req: AskRequest):
     # 2. Cache MISS — списываем 1 запрос из дневного лимита
     used, limit = increment_daily_usage(req.device_id, tz_offset)
 
-        # Для комнатных растений с типом "care" используем отдельный промпт
+    # Для комнатных растений с типом "care" используем отдельный промпт
     if (req.request_type == "care") and is_indoor_plant(req.culture_name or ""):
         system_prompt, max_tokens_for_request = build_indoor_care_prompt()
         print(f"Using INDOOR prompt for: {req.culture_name}")
     else:
         system_prompt, max_tokens_for_request = build_system_prompt(req.request_type or "free")
 
-    # Формируем user_prompt с учётом контекста культуры и региона
     context_lines = []
 
     if req.culture_name:
@@ -1323,7 +1295,7 @@ async def ask_photo(req: AskPhotoRequest):
         {"role": "user", "content": user_content},
     ]
     metrics["ask_photo_total"] += 1
-    text, model_id = await call_openrouter_vision(messages, max_tokens=2500)
+    text, model_id = await call_aitunnel_vision(messages, max_tokens=2500)
     return AiResponse(text=text, used=used, limit=limit, model=model_id)
 
 
@@ -1401,7 +1373,6 @@ async def generate_plan(req: PlanRequest):
     tz_offset = req.timezone_offset_minutes or 0
     now_ts = time.time()
 
-    # 1. Проверяем кэш
     cached = plan_cache.get(cache_key_str)
     if cached and (now_ts - cached["cached_at"]) < PLAN_CACHE_TTL_SECONDS:
         print(f"Plan cache HIT: {cache_key_str}")
@@ -1414,13 +1385,10 @@ async def generate_plan(req: PlanRequest):
             "limit": limit,
         })
 
-    # 2. Cache MISS — списываем 1 запрос из дневного лимита
     used, limit = increment_daily_usage(req.device_id, tz_offset)
 
-    # 3. Считаем локальную дату пользователя
     local_date = _local_date_for_offset(tz_offset)
 
-    # 4. Формируем user-промпт
     variety_str = req.variety.strip() if req.variety else "не указан"
     user_prompt = (
         f"Культура: {req.culture_name}\n"
@@ -1432,13 +1400,11 @@ async def generate_plan(req: PlanRequest):
         "или на полный годовой цикл (многолетники). JSON."
     )
 
-    # 5. Запрос к DeepSeek
     system_prompt = build_plan_prompt()
     parsed = await call_deepseek_json(system_prompt, user_prompt, max_tokens=4000)
     tasks = validate_plan_json(parsed)
     lifecycle = parsed.get("detected_lifecycle", "")
 
-    # 6. Сохраняем в кэш
     plan_cache[cache_key_str] = {
         "cached_at": now_ts,
         "tasks": tasks,
