@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional, List
 
@@ -1428,3 +1429,11 @@ async def generate_plan(req: PlanRequest):
 
 # Запуск фонового мониторинга upstreams при старте приложения
 threading.Thread(target=_upstream_loop, daemon=True).start()
+
+# ========== PWA (веб-версия «AI Ботаник») ==========
+# Статика из папки static/ раздаётся на /app/ — не мешает API и health-check на /.
+# Деплой: обновил static/ → git push → Render пересоберёт сам.
+_STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+if os.path.isdir(_STATIC_DIR):
+    app.mount("/app", StaticFiles(directory=_STATIC_DIR, html=True), name="pwa")
+    print(f"PWA static mounted at /app/ from {_STATIC_DIR}")
