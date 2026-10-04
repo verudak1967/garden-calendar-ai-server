@@ -209,6 +209,19 @@ input[type="text"], input[type="date"], textarea, select {
   cursor: pointer;
 }
 .datefield-value.empty { color: var(--muted); }
+.datefield-value { display: block; padding-right: 32px; }
+.datefield-ico {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  font-size: 16px;
+}
+.datefield:focus-within {
+  outline: 2px solid var(--green);
+  border-color: var(--green);
+}
 .datefield input[type="date"] {
   position: absolute;
   inset: 0;

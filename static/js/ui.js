@@ -72,8 +72,24 @@ export function dateFieldHTML(id, value, placeholder = 'Выберите дат�
   const shown = value ? formatDateRu(value) : esc(placeholder);
   return `<label class="datefield">
     <span class="datefield-value${value ? '' : ' empty'}">${shown}</span>
+    <span class="datefield-ico">📅</span>
     <input type="date" id="${id}" value="${value || ''}">
   </label>`;
+}
+
+// Тап в любое место поля открывает календарь принудительно:
+// на десктопном Chrome прозрачный input сам пикер не открывает.
+export function initDateFieldPicker() {
+  document.addEventListener('click', (e) => {
+    const field = e.target.closest('.datefield');
+    if (!field) return;
+    const inp = field.querySelector('input[type="date"]');
+    if (!inp) return;
+    try {
+      inp.focus();
+      if (typeof inp.showPicker === 'function') inp.showPicker();
+    } catch { /* браузер открыл пикер сам по фокусу — это тоже норм */ }
+  });
 }
 
 // Обновить надпись после выбора даты (навешивается глобально на change)

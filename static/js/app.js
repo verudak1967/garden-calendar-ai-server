@@ -9,8 +9,8 @@ import * as db from './db.js';
 import { renderMarkdown } from './md.js';
 import {
   esc, toast, setLoading, hideLoading, openModal, closeModal, confirmDialog, uuid,
-  formatDateRu, dateFieldHTML, syncDateField, toISODate, parseISODate, addDays,
-  usdaZoneToDayShift, shiftMMDD, determinePlanYear,
+  formatDateRu, dateFieldHTML, syncDateField, initDateFieldPicker, toISODate,
+  parseISODate, addDays, usdaZoneToDayShift, shiftMMDD, determinePlanYear,
 } from './ui.js';
 
 const view = document.getElementById('view');
@@ -777,4 +777,5 @@ document.addEventListener('change', (e) => {
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => { /* SW не критичен */ });
 }
+initDateFieldPicker();
 route();
