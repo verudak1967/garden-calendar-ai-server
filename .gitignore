@@ -66,3 +66,5 @@ vision_*.txt
 *.jks
 *.keystore
 keystore.properties
+# Статика PWA — исключение из правил выше
+!static/**
