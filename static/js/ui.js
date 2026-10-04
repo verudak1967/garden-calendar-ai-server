@@ -66,6 +66,30 @@ export function formatDateRu(iso) {
   return `${pad2(d)}.${pad2(m)}.${y}`;
 }
 
+// Поле даты с единым отображением дд.мм.гггг: своя надпись + прозрачный
+// нативный input поверх (тап открывает системный календарь устройства).
+export function dateFieldHTML(id, value, placeholder = 'Выберите дату') {
+  const shown = value ? formatDateRu(value) : esc(placeholder);
+  return `<label class="datefield">
+    <span class="datefield-value${value ? '' : ' empty'}">${shown}</span>
+    <input type="date" id="${id}" value="${value || ''}">
+  </label>`;
+}
+
+// Обновить надпись после выбора даты (навешивается глобально на change)
+export function syncDateField(inputEl) {
+  const wrap = inputEl.closest('.datefield');
+  if (!wrap) return;
+  const span = wrap.querySelector('.datefield-value');
+  if (inputEl.value) {
+    span.textContent = formatDateRu(inputEl.value);
+    span.classList.remove('empty');
+  } else {
+    span.textContent = 'Выберите дату';
+    span.classList.add('empty');
+  }
+}
+
 // ── Дата-утилиты, паритет с Android (GardenViewModel/TemplatesScreen) ──
 
 export const pad2 = (n) => String(n).padStart(2, '0');

@@ -178,8 +178,8 @@ html, body {
 }
 
 /* ── Формы ──────────────────────────────────── */
-label.field { display: block; margin-bottom: 12px; }
-label.field span {
+.field { display: block; margin-bottom: 12px; }
+.field > span {
   display: block;
   font-size: 13px;
   color: var(--muted);
@@ -194,6 +194,30 @@ input[type="text"], input[type="date"], textarea, select {
   font-family: inherit;
   background: #fff;
   color: var(--text);
+}
+
+/* Поле даты: показываем дд.мм.гггг своей надписью, поверх — прозрачный
+   нативный календарь (тап открывает системный пикер) */
+.datefield {
+  position: relative;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 15px;
+  background: #fff;
+  cursor: pointer;
+}
+.datefield-value.empty { color: var(--muted); }
+.datefield input[type="date"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  border: none;
+  padding: 0;
+  cursor: pointer;
 }
 textarea { min-height: 90px; resize: vertical; }
 input:focus, textarea:focus, select:focus { outline: 2px solid var(--green); border-color: var(--green); }

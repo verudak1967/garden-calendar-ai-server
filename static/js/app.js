@@ -9,8 +9,8 @@ import * as db from './db.js';
 import { renderMarkdown } from './md.js';
 import {
   esc, toast, setLoading, hideLoading, openModal, closeModal, confirmDialog, uuid,
-  formatDateRu, toISODate, parseISODate, addDays, usdaZoneToDayShift,
-  shiftMMDD, determinePlanYear,
+  formatDateRu, dateFieldHTML, syncDateField, toISODate, parseISODate, addDays,
+  usdaZoneToDayShift, shiftMMDD, determinePlanYear,
 } from './ui.js';
 
 const view = document.getElementById('view');
@@ -174,10 +174,8 @@ function showAddCultureModal() {
         <option value="GREENHOUSE">Закрытый грунт (теплица)</option>
         <option value="SEEDLING">Рассада</option>
       </select></label>
-    <div style="display:flex; gap:10px">
-      <label class="field" style="flex:1"><span>Посев</span><input type="date" id="c-sowing"></label>
-      <label class="field" style="flex:1"><span>Высадка</span><input type="date" id="c-transplant"></label>
-    </div>
+    <div class="field"><span>Посев</span>${dateFieldHTML('c-sowing', '', 'дд.мм.гггг')}</div>
+    <div class="field"><span>Высадка</span>${dateFieldHTML('c-transplant', '', 'дд.мм.гггг')}</div>
     <label class="field"><span>Количество</span>
       <input type="number" id="c-qty" min="1" inputmode="numeric" placeholder="например, 6"></label>
     <div class="modal-actions">
@@ -311,8 +309,7 @@ function showAddTaskModal(cultureId, presetDate) {
       <input type="text" id="t-title" placeholder="Полить, подкормить…" autocomplete="off"></label>
     <label class="field"><span>Описание</span>
       <input type="text" id="t-desc" autocomplete="off"></label>
-    <label class="field"><span>Дата</span>
-      <input type="date" id="t-date" value="${esc(presetDate || toISODate(new Date()))}"></label>
+    <div class="field"><span>Дата</span>${dateFieldHTML('t-date', presetDate || toISODate(new Date()))}</div>
     <div class="modal-actions">
       <button class="btn secondary" data-close>Отмена</button>
       <button class="btn" id="t-save">Добавить</button>
@@ -497,8 +494,7 @@ async function screenCalendar() {
 
   view.innerHTML = `
     <div class="card">
-      <label class="field"><span>Выберите дату</span>
-        <input type="date" id="cal-date" value="${selected}"></label>
+      <div class="field"><span>Выберите дату</span>${dateFieldHTML('cal-date', selected)}</div>
     </div>
     <div id="cal-body"></div>
     <button class="btn secondary" data-action="add-common-task">+ Общая задача по саду</button>`;
@@ -769,6 +765,11 @@ view.addEventListener('change', (e) => {
     localStorage.setItem('onboarded', '1');
     toast('Зона сохранена: ' + ZONES[e.target.value]);
   }
+});
+
+// Единое обновление надписей всех полей дат (календарь + модальные формы)
+document.addEventListener('change', (e) => {
+  if (e.target.matches('.datefield input[type="date"]')) syncDateField(e.target);
 });
 
 // ── Инициализация ──────────────────────────────────────────
