@@ -9,6 +9,10 @@ import * as db from './db.js';
 import { icon } from './icons.js';
 import { renderMarkdown } from './md.js';
 import {
+  GROUPS, SUBGROUPS, SPECIES, groupLabel, groupEmoji, subgroupLabel,
+  findSpecies, speciesByKey, DEFAULT_LOCATIONS,
+} from './catalog.js';
+import {
   esc, toast, setLoading, hideLoading, openModal, closeModal, confirmDialog, uuid,
   formatDateRu, dateFieldHTML, syncDateField, initDateFieldPicker, toISODate,
   parseISODate, addDays, usdaZoneToDayShift, shiftMMDD, determinePlanYear,
@@ -32,10 +36,10 @@ const ZONES = {
   9: '9 — Сочи, Ялта, Крым (−7…−1 °C)',
 };
 
-const PLANTING_TYPES = {
-  OPEN_GROUND: 'Открытый грунт',
-  GREENHOUSE: 'Закрытый грунт',
-  SEEDLING: 'Рассада',
+const SOWING_METHODS = {
+  SEEDLINGS: 'Посев на рассаду',
+  DIRECT: 'Посев в грунт / высадка',
+  BOUGHT_SEEDLING: 'Покупная рассада',
 };
 
 const PHASES = {
@@ -115,30 +119,44 @@ window.addEventListener('hashchange', route);
 
 async function screenGarden() {
   const cultures = await db.getCultures();
+  const locations = await db.getLocations();
+  const locById = Object.fromEntries(locations.map((l) => [l.id, l]));
   pageTitle.textContent = 'Мой сад';
 
-  // Первый запуск: выбор климатической зоны (паритет FirstTimeRegionDialog)
   if (!localStorage.getItem('onboarded')) showFirstZoneDialog();
 
   const sub = (c) => [
     c.variety,
-    PLANTING_TYPES[c.plantingType] || null,
-    c.quantity ? `${c.quantity} шт.` : null,
+    c.groupCode ? groupLabel(c.groupCode) : 'без категории',
   ].filter(Boolean).join(' · ');
 
+  const row = (c) => `
+    <div class="culture-item" data-action="open-culture" data-id="${esc(c.id)}">
+      <div class="culture-emoji">${c.groupCode ? groupEmoji(c.groupCode) : '🌱'}</div>
+      <div style="flex:1">
+        <div class="culture-name">${esc(c.name)}</div>
+        <div class="culture-sub">${esc(sub(c))}</div>
+      </div>
+      ${!c.groupCode ? '<span class="task-date" style="background:#FFF3E0;color:#E65100">без группы</span>' : ''}
+      <span class="muted">›</span>
+    </div>`;
+
+  // Группировка по локациям; без локации — блок «Не размещено»
+  const sections = locations
+    .map((l) => ({ title: l.name, list: cultures.filter((c) => c.locationId === l.id) }))
+    .filter((s) => s.list.length);
+  const unplaced = cultures.filter((c) => !c.locationId || !locById[c.locationId]);
+
+  const sectionHTML = (title, list, cls = '') => `
+    <div class="card ${cls}">
+      <h2>${esc(title)}</h2>
+      ${list.map(row).join('')}
+    </div>`;
+
   view.innerHTML = (cultures.length
-    ? `<div class="card"><h2>Мои растения</h2>
-        ${cultures.map((c) => `
-          <div class="culture-item" data-action="open-culture" data-id="${esc(c.id)}">
-            <div class="culture-emoji">${icon('sprout')}</div>
-            <div style="flex:1">
-              <div class="culture-name">${esc(c.name)}</div>
-              <div class="culture-sub">${esc(sub(c) || 'детали не указаны')}</div>
-            </div>
-            <span class="muted">›</span>
-          </div>`).join('')}
-      </div>`
-    : `<div class="empty"><span class="big">${icon('sprout', 56)}</span>Здесь будут ваши растения.<br>Добавьте своё или возьмите готовый шаблон.</div>`)
+    ? sections.map((s) => sectionHTML(s.title, s.list)).join('')
+      + (unplaced.length ? sectionHTML('Не размещено', unplaced) : '')
+    : `<div class="empty"><span class="big">${icon('sprout', 56)}</span>Здесь будут ваши растения.<br>Добавьте по фото или из шаблона.</div>`)
     + `<button class="btn secondary" data-action="open-templates">${icon('list', 18)} Готовые шаблоны планов</button>
        <button class="fab" data-action="add-culture" aria-label="Добавить">${icon('plus', 26)}</button>`;
 
@@ -163,44 +181,195 @@ function showFirstZoneDialog() {
   });
 }
 
+function locationSelectHTML(id, selectedId) {
+  return `<select id="${id}">
+    <option value="">— не размещено —</option>
+    ${DEFAULT_LOCATIONS.map((l) =>
+      `<option value="${l.id}" ${l.id === selectedId ? 'selected' : ''}>${l.name}</option>`).join('')}
+  </select>`;
+}
+
 function showAddCultureModal() {
   const back = openModal(`
     <h2>Новое растение</h2>
-    <label class="field"><span>Название *</span>
-      <input type="text" id="c-name" placeholder="Томат, яблоня, фикус…" autocomplete="off"></label>
-    <label class="field"><span>Сорт</span>
-      <input type="text" id="c-variety" placeholder="Санька, Антоновка…" autocomplete="off"></label>
-    <label class="field"><span>Тип посадки</span>
-      <select id="c-type">
-        <option value="OPEN_GROUND">Открытый грунт</option>
-        <option value="GREENHOUSE">Закрытый грунт (теплица)</option>
-        <option value="SEEDLING">Рассада</option>
-      </select></label>
-    <div class="field"><span>Посев</span>${dateFieldHTML('c-sowing', '', 'дд.мм.гггг')}</div>
-    <div class="field"><span>Высадка</span>${dateFieldHTML('c-transplant', '', 'дд.мм.гггг')}</div>
-    <label class="field"><span>Количество</span>
-      <input type="number" id="c-qty" min="1" inputmode="numeric" placeholder="например, 6"></label>
+    <div class="tabs" style="margin-bottom:10px">
+      <div class="tab active" data-addmode="photo">${icon('camera', 16)} По фото</div>
+      <div class="tab" data-addmode="manual">${icon('note', 16)} Вручную</div>
+    </div>
+
+    <div id="add-photo-mode">
+      <input type="file" id="np-file" accept="image/*" style="display:none">
+      <button class="btn secondary" data-np="pick">${icon('camera', 20)} Выбрать / сделать фото</button>
+      <img id="np-preview" class="photo-preview mt" style="max-height:180px">
+      <button class="btn mt" data-np="identify" disabled>${icon('sprout', 18)} Определить (1 запрос)</button>
+      <div id="np-result" class="mt"></div>
+    </div>
+
+    <div id="add-manual-mode" style="display:none">
+      <label class="field"><span>Название *</span>
+        <input type="text" id="nm-name" list="species-list" placeholder="Начните вводить: томат, яблоня…" autocomplete="off">
+        <datalist id="species-list">${SPECIES.map((sp) =>
+          `<option value="${esc(sp.name)}">${groupLabel(sp.g)} · ${esc(sp.latin || '')}</option>`).join('')}</datalist>
+        <div class="muted small mt" id="nm-match" style="margin-top:4px"></div></label>
+      <label class="field"><span>Сорт / кличка</span>
+        <input type="text" id="nm-variety" autocomplete="off"></label>
+    </div>
+
+    <div class="field mt"><span>Где растёт</span>${locationSelectHTML('np-location', null)}</div>
     <div class="modal-actions">
       <button class="btn secondary" data-close>Отмена</button>
-      <button class="btn" id="c-save">Добавить</button>
+      <button class="btn" id="np-save" disabled>Добавить</button>
     </div>`);
-  back.querySelector('#c-save').addEventListener('click', async () => {
-    const name = back.querySelector('#c-name').value.trim();
-    if (!name) { toast('Введите название растения'); return; }
-    await db.putCulture({
-      id: uuid(),
-      name,
-      variety: back.querySelector('#c-variety').value.trim() || null,
-      plantingType: back.querySelector('#c-type').value,
-      sowingDate: back.querySelector('#c-sowing').value || null,
-      transplantDate: back.querySelector('#c-transplant').value || null,
-      quantity: Number(back.querySelector('#c-qty').value) || null,
-      createdAt: Date.now(),
+
+  const $ = (sel) => back.querySelector(sel);
+  let photoData = null;      // dataURL (640px) для сохранения
+  let photoBase64 = null;    // для запроса
+  let chosen = null;         // выбранный кандидат или {manual:true, species}
+  let identifyPayload = null;
+
+  // переключение режимов
+  back.querySelectorAll('[data-addmode]').forEach((t) => {
+    t.addEventListener('click', () => {
+      back.querySelectorAll('[data-addmode]').forEach((x) => x.classList.toggle('active', x === t));
+      const photo = t.dataset.addmode === 'photo';
+      $('#add-photo-mode').style.display = photo ? '' : 'none';
+      $('#add-manual-mode').style.display = photo ? 'none' : '';
+      $('#np-save').disabled = photo ? !chosen : !$('#nm-name').value.trim();
     });
+  });
+
+  $('[data-np="pick"]').addEventListener('click', () => $('#np-file').click());
+  $('#np-file').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const dataUrl = await new Promise((res) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.readAsDataURL(file);
+    });
+    $('#np-preview').src = dataUrl;
+    $('#np-preview').classList.add('visible');
+    const downscaled = await downscaleToDataURL(file, 640, 0.8);
+    photoData = downscaled;
+    photoBase64 = downscaled.split(',')[1];
+    $('[data-np="identify"]').disabled = false;
+    $('#np-result').innerHTML = '';
+    chosen = null;
+    $('#np-save').disabled = true;
+  });
+
+  $('[data-np="identify"]').addEventListener('click', async () => {
+    if (!photoBase64) return;
+    setLoading('Определяем растение… Если сервер спал — до минуты.');
+    try {
+      const resp = await api.identify(photoBase64);
+      identifyPayload = resp;
+      await refreshUsageBadge();
+      if (!resp.candidates.length) {
+        $('#np-result').innerHTML = `<div class="empty">${esc(resp.reason || 'На фото не распознано растение')}</div>`;
+        return;
+      }
+      chosen = resp.candidates[0];
+      $('#np-result').innerHTML = resp.candidates.map((c, i) => {
+        const known = findSpecies(c.name);
+        const g = known ? groupLabel(known.g) : (groupLabel(c.groupCode) || 'категория уточняется');
+        const e = known ? groupEmoji(known.g) : (groupEmoji(c.groupCode) || '🌱');
+        return `<label class="check-row" style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:6px">
+          <input type="radio" name="np-cand" value="${i}" ${i === 0 ? 'checked' : ''}>
+          <span><b>${esc(c.name)}</b> ${c.latinName ? `<span class="muted small">${esc(c.latinName)}</span>` : ''}
+          <br><span class="small">${e} ${esc(g)} · уверенность ${Math.round((c.confidence || 0) * 100)}%</span></span>
+        </label>`;
+      }).join('');
+      $('#np-result').querySelectorAll('input[name=np-cand]').forEach((r) => {
+        r.addEventListener('change', () => { chosen = resp.candidates[Number(r.value)]; });
+      });
+      $('#np-save').disabled = false;
+    } catch (err) {
+      toast(err.message, 4500);
+    } finally {
+      hideLoading();
+    }
+  });
+
+  $('#nm-name').addEventListener('input', () => {
+    const sp = findSpecies($('#nm-name').value.trim());
+    chosen = { manual: true, species: sp };
+    $('#nm-match').textContent = sp
+      ? `${groupEmoji(sp.g)} ${groupLabel(sp.g)} · ${subgroupLabel(sp.s)}${sp.latin ? ' · ' + sp.latin : ''} — категория подставлена из справочника`
+      : 'Вид не найден в справочнике — растение будет «без категории», её можно выбрать позже.';
+    $('#np-save').disabled = !$('#nm-name').value.trim();
+  });
+
+  $('#np-save').addEventListener('click', async () => {
+    const locationId = $('#np-location').value || null;
+    if (chosen && chosen.manual) {
+      const name = $('#nm-name').value.trim();
+      if (!name) { toast('Введите название'); return; }
+      const sp = chosen.species;
+      await db.putCulture({
+        id: uuid(),
+        name, variety: $('#nm-variety').value.trim() || null,
+        speciesKey: sp ? sp.k : null,
+        latinName: sp ? (sp.latin || null) : null,
+        groupCode: sp ? sp.g : null, subgroupCode: sp ? sp.s : null,
+        locationId, status: 'ACTIVE', source: 'MANUAL', schema: 2,
+        createdAt: Date.now(),
+      });
+    } else if (chosen) {
+      // photo-first: подтверждение кандидата
+      const sp = findSpecies(chosen.name); // каталог нормализует группу надёжнее модели
+      const cultureId = uuid();
+      const photoId = uuid();
+      const groupCode = sp ? sp.g : (GROUPS[chosen.groupCode] ? chosen.groupCode : null);
+      await db.putCulture({
+        id: cultureId,
+        name: chosen.name, variety: null,
+        speciesKey: sp ? sp.k : null,
+        latinName: sp ? (sp.latin || chosen.latinName) : (chosen.latinName || null),
+        groupCode, subgroupCode: sp ? sp.s : null,
+        locationId, status: 'ACTIVE', source: 'AI_PHOTO', schema: 2,
+        createdAt: Date.now(),
+      });
+      if (photoData) {
+        await db.putPhoto({ id: photoId, plantId: cultureId, uri: photoData, createdAt: Date.now(), purpose: 'IDENTIFY' });
+      }
+      await db.putIdentification({
+        id: uuid(), photoId,
+        candidates: identifyPayload ? identifyPayload.candidates : [chosen],
+        suggestedGroupCode: chosen.groupCode || null,
+        suggestedSubgroupCode: chosen.subgroupCode || null,
+        confidence: chosen.confidence || null,
+        status: 'CONFIRMED', createdCultureId: cultureId, createdAt: Date.now(),
+      });
+    } else {
+      toast('Сначала определите растение по фото или заполните название');
+      return;
+    }
     closeModal();
     route();
   });
-  back.querySelector('#c-name').focus();
+}
+
+// Сжатие файла в dataURL заданного размера (для истории фото)
+function downscaleToDataURL(file, maxSide = 640, quality = 0.8) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        res(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.onerror = rej;
+      img.src = r.result;
+    };
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
 }
 
 // ── Экран «Культура» (табы) ────────────────────────────────
@@ -208,26 +377,48 @@ function showAddCultureModal() {
 async function screenCulture(m) {
   const id = m[1];
   let tab = m[2];
-  if (!['tasks', 'care', 'pests', 'diseases', 'notes'].includes(tab)) tab = 'tasks';
+  if (!['tasks', 'care', 'pests', 'diseases', 'notes', 'history'].includes(tab)) tab = 'tasks';
 
   const culture = await db.getCulture(id);
   if (!culture) { location.hash = '#garden'; return; }
   pageTitle.textContent = culture.name + (culture.variety ? ` (${culture.variety})` : '');
 
+  const locations = await db.getLocations();
   const tabs = [
     ['tasks', 'Задачи'], ['care', 'Уход'], ['pests', 'Вредители'],
-    ['diseases', 'Болезни'], ['notes', 'Заметки'],
+    ['diseases', 'Болезни'], ['notes', 'Заметки'], ['history', 'История'],
   ];
   view.innerHTML = `
+    <div class="card">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <span>${groupEmoji(culture.groupCode)}</span>
+        <span class="small">${esc(culture.groupCode ? groupLabel(culture.groupCode) +
+          (culture.subgroupCode ? ' · ' + subgroupLabel(culture.subgroupCode) : '') : 'без категории')}</span>
+        ${culture.latinName ? `<span class="muted small">${esc(culture.latinName)}</span>` : ''}
+        ${culture.source === 'AI_PHOTO' ? '<span class="task-date">по фото</span>' : ''}
+      </div>
+      <div class="field" style="margin:10px 0 0"><span>Группа (справочник видов)</span>
+        <select id="ci-group" data-ci="group">
+          <option value="">— без категории —</option>
+          ${Object.entries(GROUPS).map(([code, g]) =>
+            `<option value="${code}" ${culture.groupCode === code ? 'selected' : ''}>${g.emoji} ${g.name}</option>`).join('')}
+        </select></div>
+      <div class="field" style="margin:0"><span>Где растёт</span>
+        ${locationSelectHTML('ci-location', culture.locationId)}</div>
+    </div>
     <div class="tabs">${tabs.map(([key, label]) =>
       `<div class="tab ${key === tab ? 'active' : ''}" data-action="culture-tab" data-tab="${key}">${label}</div>`).join('')}
     </div>
     <div id="tab-body"></div>
-    <button class="btn danger small mt" data-action="delete-culture" data-id="${esc(id)}">Удалить растение</button>`;
+    <div style="display:flex;gap:8px;margin-top:12px">
+      <button class="btn secondary small" data-action="archive-culture" data-id="${esc(id)}">В архив</button>
+      <button class="btn danger small" data-action="delete-culture" data-id="${esc(id)}">Удалить навсегда</button>
+    </div>`;
 
   const body = view.querySelector('#tab-body');
   if (tab === 'tasks') await renderTasksTab(body, culture);
   else if (tab === 'notes') await renderNotesTab(body, culture);
+  else if (tab === 'history') await renderHistoryTab(body, culture);
   else await renderAiTab(body, culture, tab);
 }
 
@@ -461,15 +652,23 @@ async function applyTemplate(templateId) {
   const year = determinePlanYear(t.tasks.map((x) => x.date), shift);
 
   const cultureId = uuid();
+  const sp = findSpecies(t.name);
   await db.putCulture({
     id: cultureId,
     name: t.name,
     variety: null,
-    plantingType: 'OPEN_GROUND',
-    sowingDate: null,
-    transplantDate: toISODate(new Date()),
-    quantity: null,
+    speciesKey: sp ? sp.k : null,
+    latinName: sp ? (sp.latin || null) : null,
+    groupCode: sp ? sp.g : null,
+    subgroupCode: sp ? sp.s : null,
+    locationId: 'loc-open',
+    status: 'ACTIVE', source: 'MANUAL', schema: 2,
     createdAt: Date.now(),
+  });
+  await db.putSowing({
+    id: uuid(), plantId: cultureId, date: toISODate(new Date()),
+    seasonYear: new Date().getFullYear(), method: 'DIRECT',
+    quantity: null, note: 'добавлено из шаблона',
   });
   for (const x of t.tasks) {
     await db.putTask({
@@ -486,6 +685,131 @@ async function applyTemplate(templateId) {
   }
   toast(`«${t.name}» добавлен: ${t.tasks.length} задач`);
   location.hash = `#culture/${cultureId}/tasks`;
+}
+
+// — Таб «История»: посевы, урожай, фото-хроника (модель v2) —
+
+async function renderHistoryTab(body, culture) {
+  const [sowings, harvests, photos] = await Promise.all([
+    db.getSowingsByPlant(culture.id),
+    db.getHarvestsByPlant(culture.id),
+    db.getPhotosByPlant(culture.id),
+  ]);
+  const bySeason = {};
+  for (const h of harvests) {
+    const y = h.seasonYear || Number(String(h.date).slice(0, 4));
+    bySeason[y] = (bySeason[y] || 0) + (h.weightKg || 0);
+  }
+  const seasonRows = Object.entries(bySeason).sort((a, b) => b[0] - a[0]);
+
+  body.innerHTML = `
+    <div class="card">
+      <h2>Посевы и высадки</h2>
+      ${sowings.length ? sowings.map((sw) => `
+        <div class="task">
+          <div style="flex:1">
+            <div class="task-title">${esc(SOWING_METHODS[sw.method] || sw.method)}</div>
+            ${sw.quantity ? `<div class="task-desc">${sw.quantity} шт.</div>` : ''}
+            ${sw.note ? `<div class="task-desc">${esc(sw.note)}</div>` : ''}
+          </div>
+          <span class="task-date">${formatDateRu(sw.date)}</span>
+        </div>`).join('')
+      : '<div class="empty small">Посевов не зафиксировано</div>'}
+      <button class="btn secondary small mt" data-action="add-sowing" data-id="${esc(culture.id)}">${icon('plus', 16)} Посев</button>
+    </div>
+
+    <div class="card">
+      <h2>Урожай</h2>
+      ${seasonRows.length ? seasonRows.map(([y, kg]) =>
+        `<div class="task"><div class="task-title">Сезон ${y}</div><span class="task-date">${(kg || 0).toLocaleString('ru-RU')} кг</span></div>`).join('')
+      : ''}
+      ${harvests.length ? harvests.map((h) => `
+        <div class="task">
+          <div style="flex:1">
+            <div class="task-title">${h.weightKg ? h.weightKg + ' кг' : ''}${h.count ? (h.weightKg ? ' · ' : '') + h.count + ' шт.' : ''}</div>
+            ${h.note ? `<div class="task-desc">${esc(h.note)}</div>` : ''}
+          </div>
+          <span class="task-date">${formatDateRu(h.date)}</span>
+        </div>`).join('')
+      : '<div class="empty small">Записей урожая нет</div>'}
+      <button class="btn secondary small mt" data-action="add-harvest" data-id="${esc(culture.id)}">${icon('plus', 16)} Урожай</button>
+    </div>
+
+    <div class="card">
+      <h2>Фото-хроника</h2>
+      ${photos.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap">${photos.map((p) => `
+        <img src="${p.uri}" style="width:84px;height:84px;object-fit:cover;border-radius:10px" alt="">`).join('')}</div>`
+      : '<div class="empty small">Фото пока нет</div>'}
+      <input type="file" id="hist-file" accept="image/*" style="display:none">
+      <button class="btn secondary small mt" data-action="add-growth-photo" data-id="${esc(culture.id)}">${icon('camera', 16)} Добавить фото</button>
+    </div>`;
+}
+
+function showSowingModal(plantId) {
+  const today = toISODate(new Date());
+  const back = openModal(`
+    <h2>Посев / высадка</h2>
+    <div class="field"><span>Дата</span>${dateFieldHTML('sw-date', today)}</div>
+    <label class="field"><span>Способ</span>
+      <select id="sw-method">${Object.entries(SOWING_METHODS).map(([k, v]) =>
+        `<option value="${k}">${v}</option>`).join('')}</select></label>
+    <label class="field"><span>Количество</span>
+      <input type="number" id="sw-qty" min="1" inputmode="numeric" placeholder="шт."></label>
+    <label class="field"><span>Заметка</span><input type="text" id="sw-note"></label>
+    <div class="modal-actions">
+      <button class="btn secondary" data-close>Отмена</button>
+      <button class="btn" id="sw-save">Добавить</button>
+    </div>`);
+  back.querySelector('#sw-save').addEventListener('click', async () => {
+    const date = back.querySelector('#sw-date').value || today;
+    await db.putSowing({
+      id: uuid(), plantId,
+      date, seasonYear: Number(date.slice(0, 4)),
+      method: back.querySelector('#sw-method').value,
+      quantity: Number(back.querySelector('#sw-qty').value) || null,
+      note: back.querySelector('#sw-note').value.trim() || null,
+    });
+    closeModal();
+    route();
+  });
+}
+
+function showHarvestModal(plantId) {
+  const today = toISODate(new Date());
+  const back = openModal(`
+    <h2>Запись урожая</h2>
+    <div class="field"><span>Дата</span>${dateFieldHTML('hv-date', today)}</div>
+    <div style="display:flex;gap:10px">
+      <label class="field" style="flex:1"><span>Кг</span>
+        <input type="number" id="hv-kg" step="0.1" min="0" inputmode="decimal" placeholder="1.5"></label>
+      <label class="field" style="flex:1"><span>Штук</span>
+        <input type="number" id="hv-count" min="0" inputmode="numeric" placeholder="10"></label>
+    </div>
+    <label class="field"><span>Заметка</span><input type="text" id="hv-note" placeholder="Санька, первые плоды"></label>
+    <div class="modal-actions">
+      <button class="btn secondary" data-close>Отмена</button>
+      <button class="btn" id="hv-save">Добавить</button>
+    </div>`);
+  back.querySelector('#hv-save').addEventListener('click', async () => {
+    const kg = Number(back.querySelector('#hv-kg').value) || 0;
+    const count = Number(back.querySelector('#hv-count').value) || 0;
+    if (!kg && !count) { toast('Укажите вес или количество'); return; }
+    const date = back.querySelector('#hv-date').value || today;
+    await db.putHarvest({
+      id: uuid(), plantId,
+      date, seasonYear: Number(date.slice(0, 4)),
+      weightKg: kg || null, count: count || null,
+      note: back.querySelector('#hv-note').value.trim() || null,
+    });
+    closeModal();
+    route();
+  });
+}
+
+async function addGrowthPhoto(plantId, file) {
+  const dataUrl = await downscaleToDataURL(file, 640, 0.8);
+  await db.putPhoto({ id: uuid(), plantId, uri: dataUrl, createdAt: Date.now(), purpose: 'GROWTH_LOG' });
+  route();
 }
 
 // ── Экран «Календарь» ──────────────────────────────────────
@@ -714,6 +1038,7 @@ async function analyzePhoto() {
 async function screenSettings() {
   pageTitle.textContent = 'Ещё';
   const s = getSettings();
+  const archived = (await db.getCultures(true)).filter((c) => c.status === 'ARCHIVED');
   view.innerHTML = `
     <div class="card">
       <h2>Климатическая зона (USDA)</h2>
@@ -722,6 +1047,20 @@ async function screenSettings() {
         ${Object.entries(ZONES).map(([k, v]) =>
           `<option value="${k}" ${Number(k) === s.region_zone ? 'selected' : ''}>${v}</option>`).join('')}
       </select></label>
+    </div>
+    <div class="card">
+      <h2>Архив</h2>
+      <p class="muted small">Растения с историей — не в саду, но и не удалённые.</p>
+      ${archived.length ? archived.map((c) => `
+        <div class="culture-item">
+          <div class="culture-emoji">${groupEmoji(c.groupCode)}</div>
+          <div style="flex:1">
+            <div class="culture-name">${esc(c.name)}</div>
+            <div class="culture-sub">в архиве</div>
+          </div>
+          <button class="btn secondary small" data-action="restore-culture" data-id="${esc(c.id)}">Вернуть</button>
+        </div>`).join('')
+      : '<div class="empty small">Архив пуст</div>'}
     </div>
     <div class="card">
       <h2>Данные</h2>
@@ -813,6 +1152,29 @@ view.addEventListener('click', async (e) => {
       case 'open-templates': location.hash = '#templates'; break;
       case 'open-template': location.hash = `#templates/${el.dataset.id}`; break;
       case 'apply-template': await applyTemplate(el.dataset.id); break;
+      case 'archive-culture': {
+        const c = await db.getCulture(el.dataset.id);
+        if (c) {
+          c.status = 'ARCHIVED';
+          await db.putCulture(c);
+          toast('Растение перенесено в архив');
+          location.hash = '#garden';
+        }
+        break;
+      }
+      case 'restore-culture': {
+        const c = await db.getCulture(el.dataset.id);
+        if (c) {
+          c.status = 'ACTIVE';
+          await db.putCulture(c);
+          toast('Растение возвращено в сад');
+          route();
+        }
+        break;
+      }
+      case 'add-sowing': showSowingModal(el.dataset.id); break;
+      case 'add-harvest': showHarvestModal(el.dataset.id); break;
+      case 'add-growth-photo': view.querySelector('#hist-file').click(); break;
     }
   } catch (err) {
     toast(err.message || 'Ошибка', 4000);
@@ -821,10 +1183,32 @@ view.addEventListener('click', async (e) => {
 
 view.addEventListener('change', (e) => {
   if (e.target.id === 'photo-file') setupPhotoInput(e.target.files[0]);
+  if (e.target.id === 'hist-file' && e.target.files[0]) {
+    const id = location.hash.match(/^#culture\/([^/]+)/);
+    if (id) addGrowthPhoto(id[1], e.target.files[0]);
+  }
   if (e.target.id === 'zone-select') {
     localStorage.setItem('region_zone', e.target.value);
     localStorage.setItem('onboarded', '1');
     toast('Зона сохранена: ' + ZONES[e.target.value]);
+  }
+  // карточка культуры: смена группы/локации
+  if (e.target.id === 'ci-group' || e.target.id === 'ci-location') {
+    const id = location.hash.match(/^#culture\/([^/]+)/);
+    if (!id) return;
+    db.getCulture(id[1]).then((c) => {
+      if (!c) return;
+      if (e.target.id === 'ci-group') {
+        c.groupCode = e.target.value || null;
+        if (!c.groupCode) c.subgroupCode = null;
+      } else {
+        c.locationId = e.target.value || null;
+      }
+      db.putCulture(c).then(() => {
+        toast(e.target.id === 'ci-group' ? 'Группа обновлена' : 'Локация обновлена');
+        route();
+      });
+    });
   }
 });
 
@@ -846,4 +1230,6 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => { /* SW не критичен */ });
 }
 initDateFieldPicker();
-route();
+db.migrateToV2()
+  .catch((e) => toast('Миграция данных: ' + e.message, 5000))
+  .finally(() => route());

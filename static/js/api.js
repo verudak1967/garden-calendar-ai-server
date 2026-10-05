@@ -98,6 +98,20 @@ export async function generatePlan({ culture_name, variety = '', region_zone = 5
   });
 }
 
+// Определение растения по фото (photo-first ввод, модель v2).
+// Возвращает {candidates: [{name, latinName, groupCode, subgroupCode,
+// confidence, comment}], reason?, model, used, limit}; [] = не растение.
+export async function identify(image_base64) {
+  return request('/api/identify', {
+    method: 'POST',
+    body: {
+      image_base64,
+      device_id: deviceId(),
+      timezone_offset_minutes: tzOffsetMinutes(),
+    },
+  });
+}
+
 // Текущий расход дневного лимита
 export async function getUsage() {
   return request(`/api/usage?device_id=${encodeURIComponent(deviceId())}&timezone_offset_minutes=${tzOffsetMinutes()}`);
