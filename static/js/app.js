@@ -63,7 +63,7 @@ async function refreshUsageBadge() {
   try {
     const u = await api.getUsage();
     usageBadge.hidden = false;
-    usageBadge.textContent = `AI: ${u.used}/${u.limit} сегодня`;
+    usageBadge.textContent = `AI: осталось ${u.limit - u.used} из ${u.limit}`;
   } catch { /* тихо: бейдж не критичен */ }
 }
 
@@ -293,7 +293,7 @@ async function generatePlanFor(cultureId) {
         createdAt: Date.now(),
       });
     }
-    toast(`Готово: ${resp.tasks.length} задач${resp.from_cache ? ' (из кэша сервера)' : ''}`);
+    toast(`Готово: ${resp.tasks.length} задач${resp.from_cache ? ' (из кэша сервера)' : ''} · осталось запросов: ${resp.limit - resp.used}`);
     await refreshUsageBadge();
     route();
   } catch (e) {
@@ -364,7 +364,7 @@ async function loadAiTab(cultureId, tab) {
       region_zone: settings.region_zone,
     });
     await db.cachePut(aiCacheKey(tab, culture, settings), resp.text, resp.model);
-    toast(`Лимит: использовано ${resp.used} из ${resp.limit}`);
+    toast(`Осталось запросов на сегодня: ${resp.limit - resp.used}`);
     await refreshUsageBadge();
     route();
   } catch (e) {
@@ -577,7 +577,7 @@ async function askFree(predefined) {
     openModal(`
       <h2>Ответ AI</h2>
       <div class="md">${renderMarkdown(resp.text)}</div>
-      <div class="muted small mt">модель: ${esc(resp.model || '')} · лимит: ${resp.used}/${resp.limit}</div>
+      <div class="muted small mt">модель: ${esc(resp.model || '')} · осталось запросов: ${resp.limit - resp.used} из ${resp.limit}</div>
       <div class="modal-actions mt">
         <button class="btn" data-close>Закрыть</button>
       </div>`);
@@ -657,7 +657,7 @@ async function analyzePhoto() {
     });
     view.querySelector('#photo-result').innerHTML = `
       <div class="card md">${renderMarkdown(resp.text)}
-      <div class="muted small mt">модель: ${esc(resp.model || '')} · лимит: ${resp.used}/${resp.limit}</div></div>`;
+      <div class="muted small mt">модель: ${esc(resp.model || '')} · осталось запросов: ${resp.limit - resp.used} из ${resp.limit}</div></div>`;
     await refreshUsageBadge();
   } catch (e) {
     toast(e.message, 4500);
