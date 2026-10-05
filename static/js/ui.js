@@ -66,13 +66,15 @@ export function formatDateRu(iso) {
   return `${pad2(d)}.${pad2(m)}.${y}`;
 }
 
+import { icon } from './icons.js';
+
 // Поле даты с единым отображением дд.мм.гггг: своя надпись + прозрачный
 // нативный input поверх (тап открывает системный календарь устройства).
 export function dateFieldHTML(id, value, placeholder = 'Выберите дату') {
   const shown = value ? formatDateRu(value) : esc(placeholder);
   return `<label class="datefield">
     <span class="datefield-value${value ? '' : ' empty'}">${shown}</span>
-    <span class="datefield-ico">📅</span>
+    <span class="datefield-ico">${icon('calendar', 18)}</span>
     <input type="date" id="${id}" value="${value || ''}">
   </label>`;
 }

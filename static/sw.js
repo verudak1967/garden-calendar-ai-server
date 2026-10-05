@@ -1,5 +1,5 @@
 // Service Worker: кэш app-shell, API никогда не кэшируем.
-const CACHE = 'ai-botanik-v6';
+const CACHE = 'ai-botanik-v7';
 const SHELL = [
   './',
   './index.html',
@@ -9,6 +9,7 @@ const SHELL = [
   './js/app.js',
   './js/api.js',
   './js/db.js',
+  './js/icons.js',
   './js/md.js',
   './js/ui.js',
   './icons/icon-192.png',

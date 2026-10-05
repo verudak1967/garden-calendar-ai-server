@@ -317,7 +317,13 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--green); bor
   font-weight: 600;
 }
 .bottomnav a.active { color: var(--green); }
-.nav-ico { font-size: 21px; line-height: 1; }
+.nav-ico { font-size: 21px; line-height: 1; height: 24px; display: flex; align-items: center; justify-content: center; }
+.nav-ico svg { display: block; }
+.culture-emoji svg { display: block; }
+.empty .big svg { display: block; margin: 0 auto 10px; color: var(--green); opacity: 0.55; }
+.btn svg { vertical-align: -3px; margin-right: 5px; }
+.fab svg { display: block; }
+.task-desc svg { vertical-align: -2px; }
 
 /* ── Оверлей загрузки ───────────────────────── */
 .overlay {

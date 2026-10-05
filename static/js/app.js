@@ -6,6 +6,7 @@
 
 import * as api from './api.js';
 import * as db from './db.js';
+import { icon } from './icons.js';
 import { renderMarkdown } from './md.js';
 import {
   esc, toast, setLoading, hideLoading, openModal, closeModal, confirmDialog, uuid,
@@ -99,7 +100,7 @@ async function route() {
       try {
         await r.fn(m);
       } catch (e) {
-        view.innerHTML = `<div class="empty"><span class="big">😕</span>${esc(e.message || 'Ошибка')}</div>`;
+        view.innerHTML = `<div class="empty">${esc(e.message || 'Ошибка')}</div>`;
       }
       return;
     }
@@ -128,7 +129,7 @@ async function screenGarden() {
     ? `<div class="card"><h2>Мои растения</h2>
         ${cultures.map((c) => `
           <div class="culture-item" data-action="open-culture" data-id="${esc(c.id)}">
-            <div class="culture-emoji">🌱</div>
+            <div class="culture-emoji">${icon('sprout')}</div>
             <div style="flex:1">
               <div class="culture-name">${esc(c.name)}</div>
               <div class="culture-sub">${esc(sub(c) || 'детали не указаны')}</div>
@@ -136,9 +137,9 @@ async function screenGarden() {
             <span class="muted">›</span>
           </div>`).join('')}
       </div>`
-    : `<div class="empty"><span class="big">🌿</span>Здесь будут ваши растения.<br>Добавьте своё или возьмите готовый шаблон.</div>`)
-    + `<button class="btn secondary" data-action="open-templates">📋 Готовые шаблоны планов</button>
-       <button class="fab" data-action="add-culture" aria-label="Добавить">＋</button>`;
+    : `<div class="empty"><span class="big">${icon('sprout', 56)}</span>Здесь будут ваши растения.<br>Добавьте своё или возьмите готовый шаблон.</div>`)
+    + `<button class="btn secondary" data-action="open-templates">${icon('list', 18)} Готовые шаблоны планов</button>
+       <button class="fab" data-action="add-culture" aria-label="Добавить">${icon('plus', 26)}</button>`;
 
   refreshUsageBadge();
 }
@@ -239,7 +240,7 @@ function taskRow(t, showCulture = false, cultureName = '') {
       <div style="flex:1">
         <div class="task-title">${esc(t.title)}</div>
         ${t.description ? `<div class="task-desc">${esc(t.description)}</div>` : ''}
-        ${showCulture && cultureName ? `<div class="task-desc">🌱 ${esc(cultureName)}</div>` : ''}
+        ${showCulture && cultureName ? `<div class="task-desc">${icon('sprout', 14)} ${esc(cultureName)}</div>` : ''}
       </div>
       <span class="task-date">${formatDateRu(t.dueDate)}</span>
     </div>`;
@@ -344,7 +345,7 @@ async function renderAiTab(body, culture, tab) {
         ? `<div class="muted small">из локального кэша · модель: ${esc(cached.model || '')}</div>
            <div class="md">${renderMarkdown(cached.text)}</div>
            <button class="btn secondary small mt" data-action="ai-reload" data-tab="${tab}">Обновить</button>`
-        : `<div class="empty"><span class="big">🤖</span>Ответ AI ещё не загружен.<br>Запрос тратит 1 из дневных лимитов (кэш — бесплатно).</div>
+        : `<div class="empty"><span class="big">${icon('book', 56)}</span>Ответ AI ещё не загружен.<br>Запрос тратит 1 из дневных лимитов (кэш — бесплатно).</div>
            <button class="btn" data-action="ai-load" data-tab="${tab}">Спросить AI (${esc(AI_TABS[tab].label.toLowerCase())})</button>`}
     </div>`;
 }
@@ -551,7 +552,7 @@ async function screenAiHandbook() {
         <h2>История</h2>
         ${history.map((h) => `
           <div class="culture-item" data-action="ai-history" data-q="${esc(h.q)}">
-            <div class="culture-emoji">💬</div>
+            <div class="culture-emoji">${icon('chat')}</div>
             <div style="flex:1">
               <div class="culture-name" style="font-weight:500">${esc(h.q)}</div>
               <div class="culture-sub">${new Date(h.ts).toLocaleString('ru-RU')} · нажмите, чтобы повторить</div>
@@ -599,7 +600,7 @@ async function screenPhoto() {
       <h2>Что с растением?</h2>
       <p class="muted">Сфотографируйте растение — AI определит вид, болезни, вредителей и подскажет, что делать.</p>
       <input type="file" id="photo-file" accept="image/*" style="display:none">
-      <button class="btn" data-action="pick-photo">📷 Выбрать / сделать фото</button>
+      <button class="btn" data-action="pick-photo">${icon('camera', 20)} Выбрать / сделать фото</button>
       <img id="photo-preview" class="photo-preview mt">
       <label class="field mt"><span>Пояснение (необязательно)</span>
         <input type="text" id="photo-context" placeholder="Например: что за пятна на листьях смородины?"></label>
@@ -773,6 +774,13 @@ document.addEventListener('change', (e) => {
 });
 
 // ── Инициализация ──────────────────────────────────────────
+
+// Иконки нижней навигации
+const NAV_ICONS = { garden: 'sprout', calendar: 'calendar', ai: 'book', photo: 'camera', settings: 'sliders' };
+document.querySelectorAll('.bottomnav a').forEach((a) => {
+  const span = a.querySelector('.nav-ico');
+  if (span && NAV_ICONS[a.dataset.nav]) span.innerHTML = icon(NAV_ICONS[a.dataset.nav]);
+});
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(() => { /* SW не критичен */ });
