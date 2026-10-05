@@ -1560,3 +1560,15 @@ _STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 if os.path.isdir(_STATIC_DIR):
     app.mount("/app", StaticFiles(directory=_STATIC_DIR, html=True), name="pwa")
     print(f"PWA static mounted at /app/ from {_STATIC_DIR}")
+
+
+# Зеркало политики конфиденциальности на том же сервере —
+# запасной адрес, не зависящий от внешнего хостинга домена.
+@app.get("/privacy", include_in_schema=False)
+def privacy_mirror():
+    path = os.path.join(_STATIC_DIR, "privacy.html")
+    if os.path.isfile(path):
+        with open(path, "rb") as f:
+            body = f.read()
+        return Response(content=body, media_type="text/html; charset=utf-8")
+    raise HTTPException(status_code=404, detail="privacy.html not found")
