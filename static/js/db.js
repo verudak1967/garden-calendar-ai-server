@@ -202,6 +202,9 @@ export async function getGeneralNotes() {
 export function putNote(note) {
   return run('notes', 'readwrite', (s) => s.put(note));
 }
+export function getNote(id) {
+  return run('notes', 'readonly', (s) => s.get(id));
+}
 export function deleteNote(id) {
   return run('notes', 'readwrite', (s) => s.delete(id));
 }

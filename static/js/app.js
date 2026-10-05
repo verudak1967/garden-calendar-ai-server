@@ -475,6 +475,48 @@ function downscaleToDataURL(file, maxSide = 640, quality = 0.8) {
   });
 }
 
+// ── Действия с ответами AI: сохранить в заметку / поделиться ──
+// Тексты ответов держим в модуле (Map с ограничением), кнопки несут ключ.
+const aiTextStore = new Map();
+
+function rememberAiText(text, title, cultureId = null) {
+  const key = 'ai-' + Math.random().toString(36).slice(2, 8);
+  aiTextStore.set(key, { text, title, cultureId });
+  if (aiTextStore.size > 20) aiTextStore.delete(aiTextStore.keys().next().value);
+  return key;
+}
+
+function aiFooterHTML(key, extra = '') {
+  return `<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+    <button class="btn secondary small" data-action="ai-to-note" data-key="${key}">${icon('note', 16)} В заметку</button>
+    <button class="btn secondary small" data-action="ai-share" data-key="${key}">${icon('chat', 16)} Поделиться</button>
+    ${extra}
+  </div>`;
+}
+
+async function saveAiToNote(key) {
+  const rec = aiTextStore.get(key);
+  if (!rec) { toast('Ответ не найден'); return; }
+  await db.putNote({
+    id: uuid(), cultureId: rec.cultureId || null,
+    title: rec.title, content: rec.text, createdAt: Date.now(),
+  });
+  toast(rec.cultureId ? 'Сохранено в заметки растения' : 'Сохранено в общие заметки');
+}
+
+async function shareAiText(key) {
+  const rec = aiTextStore.get(key);
+  if (!rec) return;
+  if (navigator.share) {
+    try { await navigator.share({ title: 'AI Ботаник', text: rec.text }); } catch { /* пользователь отменил */ }
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(rec.text);
+    toast('Скопировано в буфер обмена');
+  } catch { toast('Не удалось скопировать'); }
+}
+
 // ── Экран «Культура» (табы) ────────────────────────────────
 
 async function screenCulture(m) {
@@ -652,13 +694,16 @@ async function renderAiTab(body, culture, tab) {
   const settings = getSettings();
   const key = aiCacheKey(tab, culture, settings);
   const cached = await db.cacheGet(key);
+  const actionKey = cached
+    ? rememberAiText(cached.text, `${AI_TABS[tab].label}: ${culture.name}`, culture.id)
+    : null;
 
   body.innerHTML = `
     <div class="card" id="ai-result">
       ${cached
         ? `<div class="muted small">из локального кэша · модель: ${esc(cached.model || '')}</div>
            <div class="md">${renderMarkdown(cached.text)}</div>
-           <button class="btn secondary small mt" data-action="ai-reload" data-tab="${tab}">Обновить</button>`
+           ${aiFooterHTML(actionKey, `<button class="btn secondary small" data-action="ai-reload" data-tab="${tab}">Обновить</button>`)}`
         : `<div class="empty"><span class="big">${icon('book', 56)}</span>Ответ AI ещё не загружен.<br>Запрос тратит 1 из дневных лимитов (кэш — бесплатно).</div>
            <button class="btn" data-action="ai-load" data-tab="${tab}">Спросить AI (${esc(AI_TABS[tab].label.toLowerCase())})</button>`}
     </div>`;
@@ -704,10 +749,35 @@ async function renderNotesTab(body, culture) {
       <div class="card">
         <div class="task-title">${esc(n.title || 'Заметка')}</div>
         <div class="muted small">${new Date(n.createdAt).toLocaleString('ru-RU')}</div>
-        <p style="margin:6px 0 0">${esc(n.content || n.text || '')}</p>
-        <button class="btn danger small mt" data-action="del-note" data-id="${esc(n.id)}">Удалить</button>
+        <p style="margin:6px 0 0;white-space:pre-wrap">${esc(n.content || n.text || '')}</p>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <button class="btn secondary small" data-action="edit-note" data-id="${esc(n.id)}">Изменить</button>
+          <button class="btn danger small" data-action="del-note" data-id="${esc(n.id)}">Удалить</button>
+        </div>
       </div>`).join('')
     : '<div class="empty">Заметок пока нет</div>'}`;
+}
+
+// Редактирование заметки (общей и по культуре)
+function showNoteEditModal(note) {
+  const back = openModal(`
+    <h2>Редактирование заметки</h2>
+    <label class="field"><span>Заголовок</span>
+      <input type="text" id="ne-title" value="${esc(note.title || '')}"></label>
+    <label class="field"><span>Текст</span>
+      <textarea id="ne-content">${esc(note.content || note.text || '')}</textarea></label>
+    <div class="modal-actions">
+      <button class="btn secondary" data-close>Отмена</button>
+      <button class="btn" id="ne-save">Сохранить</button>
+    </div>`);
+  back.querySelector('#ne-save').addEventListener('click', async () => {
+    note.title = back.querySelector('#ne-title').value.trim() || null;
+    note.content = back.querySelector('#ne-content').value.trim();
+    if (!note.content) { toast('Текст заметки пуст'); return; }
+    await db.putNote(note);
+    closeModal();
+    route();
+  });
 }
 
 // ── Шаблоны планов (паритет TemplatesScreen + templates.json) ──
@@ -1039,13 +1109,18 @@ async function askFree(predefined) {
     history.unshift({ q, ts: Date.now() });
     localStorage.setItem('ai_history', JSON.stringify(history.slice(0, 10)));
 
-    openModal(`
+    const key = rememberAiText(resp.text, 'AI: ' + q.slice(0, 60));
+    const back = openModal(`
       <h2>Ответ AI</h2>
       <div class="md">${renderMarkdown(resp.text)}</div>
       <div class="muted small mt">модель: ${esc(resp.model || '')} · осталось запросов: ${resp.limit - resp.used} из ${resp.limit}</div>
+      ${aiFooterHTML(key)}
       <div class="modal-actions mt">
         <button class="btn" data-close>Закрыть</button>
       </div>`);
+    // модалка вне #view — вешаем слушатели напрямую
+    back.querySelector('[data-action="ai-to-note"]').addEventListener('click', () => saveAiToNote(key));
+    back.querySelector('[data-action="ai-share"]').addEventListener('click', () => shareAiText(key));
     await refreshUsageBadge();
     if (predefined === undefined) route();
   } catch (e) {
@@ -1086,8 +1161,10 @@ function showGeneralNoteModal(note) {
     <p style="margin:12px 0; white-space:pre-wrap">${esc(note.content || '')}</p>
     <div class="modal-actions">
       <button class="btn secondary" data-close>Закрыть</button>
+      <button class="btn secondary" id="gn-edit">Изменить</button>
       <button class="btn danger" id="gn-delete">Удалить</button>
     </div>`);
+  back.querySelector('#gn-edit').addEventListener('click', () => showNoteEditModal(note));
   back.querySelector('#gn-delete').addEventListener('click', async () => {
     if (await confirmDialog('Удалить заметку?', 'Действие необратимо.')) {
       await db.deleteNote(note.id);
@@ -1168,9 +1245,12 @@ async function analyzePhoto() {
       image_base64: base64,
       context: view.querySelector('#photo-context').value.trim(),
     });
+    const ctxNote = view.querySelector('#photo-context').value.trim().slice(0, 40);
+    const key = rememberAiText(resp.text, 'Анализ фото' + (ctxNote ? ': ' + ctxNote : ''));
     view.querySelector('#photo-result').innerHTML = `
       <div class="card md">${renderMarkdown(resp.text)}
-      <div class="muted small mt">модель: ${esc(resp.model || '')} · осталось запросов: ${resp.limit - resp.used} из ${resp.limit}</div></div>`;
+      <div class="muted small mt">модель: ${esc(resp.model || '')} · осталось запросов: ${resp.limit - resp.used} из ${resp.limit}</div>
+      ${aiFooterHTML(key)}</div>`;
     await refreshUsageBadge();
   } catch (e) {
     toast(e.message, 4500);
@@ -1262,6 +1342,13 @@ view.addEventListener('click', async (e) => {
       case 'ai-load': case 'ai-reload': {
         const id = location.hash.match(/^#culture\/([^/]+)/)[1];
         await loadAiTab(id, el.dataset.tab);
+        break;
+      }
+      case 'ai-to-note': await saveAiToNote(el.dataset.key); break;
+      case 'ai-share': await shareAiText(el.dataset.key); break;
+      case 'edit-note': {
+        const n = await db.getNote(el.dataset.id);
+        if (n) showNoteEditModal(n);
         break;
       }
       case 'add-note': {
