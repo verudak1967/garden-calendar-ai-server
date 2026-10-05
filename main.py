@@ -77,6 +77,7 @@ SERVER_STARTED_AT = time.time()
 metrics = {
     "ask_total": 0,
     "ask_photo_total": 0,
+    "identify_total": 0,
     "plan_total": 0,
     "rejected_total": 0,
     "cache_hits": 0,
@@ -241,6 +242,12 @@ class AskRequest(BaseModel):
 class AskPhotoRequest(BaseModel):
     image_base64: str
     context: Optional[str] = ""
+    device_id: Optional[str] = "unknown"
+    timezone_offset_minutes: Optional[int] = 0
+
+
+class IdentifyRequest(BaseModel):
+    image_base64: str
     device_id: Optional[str] = "unknown"
     timezone_offset_minutes: Optional[int] = 0
 
@@ -1313,6 +1320,107 @@ async def ask_photo(req: AskPhotoRequest):
     metrics["ask_photo_total"] += 1
     text, model_id = await call_aitunnel_vision(messages, max_tokens=2500)
     return AiResponse(text=text, used=used, limit=limit, model=model_id)
+
+
+# ========== ОПРЕДЕЛЕНИЕ РАСТЕНИЯ ПО ФОТО (photo-first ввод, модель v2) ==========
+
+ALLOWED_GROUP_CODES = {"01", "02", "03", "04", "05"}
+
+
+def _parse_json_loose(text: str) -> Optional[dict]:
+    """Робкий парсер JSON из vision-ответа (модели иногда оборачивают в ```)."""
+    cleaned = (text or "").strip()
+    if cleaned.startswith("```"):
+        lines = cleaned.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        cleaned = "\n".join(lines).strip()
+    for attempt in (cleaned, re.sub(r"[\n\r]", " ", cleaned)):
+        try:
+            return json.loads(attempt, strict=False)
+        except Exception:
+            pass
+    match = re.search(r"\{[\s\S]*\}", text or "")
+    if match:
+        try:
+            return json.loads(re.sub(r"[\n\r]", " ", match.group(0)), strict=False)
+        except Exception:
+            return None
+    return None
+
+
+@app.post("/api/identify")
+async def identify(req: IdentifyRequest):
+    tz_offset = req.timezone_offset_minutes or 0
+    used, limit = increment_daily_usage(req.device_id, tz_offset)
+
+    system_prompt = (
+        "Ты — определитель растений приложения «AI Ботаник». "
+        "По фото верни 2–3 наиболее вероятных кандидата.\n"
+        "Ответь СТРОГО JSON без markdown-обёрток:\n"
+        '{"candidates":[{"name":"Русское название","latinName":"Latinskius name",'
+        '"groupCode":"01","subgroupCode":"01.01","confidence":0.87,'
+        '"comment":"краткое пояснение, что видно на фото"}]}\n\n'
+        "Группы: 01 плодовые деревья; 02 ягодные; 03 овощные и зелёные; "
+        "04 садовые декоративные; 05 комнатные.\n"
+        "subgroupCode — код подгруппы вида «01.01», если уверен; иначе null.\n"
+        "confidence — число от 0 до 1.\n"
+        "Если на фото НЕ растение — верни {\"candidates\":[],\"reason\":\"...\"}."
+    )
+    user_content = [
+        {"type": "text", "text": "Определи растение на фото."},
+        {
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{req.image_base64}"},
+        },
+    ]
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+    ]
+
+    metrics["identify_total"] += 1
+    text, model_id = await call_aitunnel_vision(messages, max_tokens=700)
+    parsed = _parse_json_loose(text)
+
+    if not parsed or not isinstance(parsed.get("candidates"), list):
+        log_error("identify", f"invalid JSON: {(text or '')[:200]}")
+        raise HTTPException(status_code=502, detail="Не удалось разобрать ответ AI. Попробуйте ещё раз.")
+
+    candidates = []
+    for c in parsed["candidates"][:3]:
+        if not isinstance(c, dict):
+            continue
+        name = str(c.get("name", "")).strip()
+        if not name:
+            continue
+        group = str(c.get("groupCode", "") or "").strip()
+        subgroup = str(c.get("subgroupCode", "") or "").strip() or None
+        try:
+            confidence = round(float(c.get("confidence", 0)), 2)
+        except (ValueError, TypeError):
+            confidence = 0.0
+        candidates.append({
+            "name": name[:80],
+            "latinName": str(c.get("latinName", "") or "").strip()[:80] or None,
+            "groupCode": group if group in ALLOWED_GROUP_CODES else None,
+            "subgroupCode": subgroup if (subgroup and group in ALLOWED_GROUP_CODES) else None,
+            "confidence": max(0.0, min(1.0, confidence)),
+            "comment": str(c.get("comment", "") or "").strip()[:200] or None,
+        })
+
+    if not candidates and not parsed.get("reason"):
+        parsed["reason"] = "На фото не удалось распознать растение"
+
+    return _json_utf8_response({
+        "candidates": candidates,
+        "reason": parsed.get("reason"),
+        "model": model_id,
+        "used": used,
+        "limit": limit,
+    })
 
 
 # ========== АДМИН-ЭНДПОИНТЫ ==========
