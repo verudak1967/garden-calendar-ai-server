@@ -859,12 +859,30 @@ async function renderHistoryTab(body, culture) {
 
     <div class="card">
       <h2>Фото-хроника</h2>
-      ${photos.length ? `<div style="display:flex;gap:8px;flex-wrap:wrap">${photos.map((p) => `
-        <img src="${p.uri}" style="width:84px;height:84px;object-fit:cover;border-radius:10px" alt="">`).join('')}</div>`
+      ${photos.length ? `<div style="display:flex;gap:12px;flex-wrap:wrap">${photos.map((p) => `
+        <div data-action="open-photo" data-id="${esc(p.id)}" style="width:88px;cursor:pointer">
+          <img src="${p.uri}" style="width:88px;height:88px;object-fit:cover;border-radius:10px" alt="">
+          <div class="muted" style="font-size:10.5px;text-align:center;margin-top:3px">${esc(formatDateRu(toISODate(new Date(p.createdAt))))}</div>
+        </div>`).join('')}</div>`
       : '<div class="empty small">Фото пока нет</div>'}
       <input type="file" id="hist-file" accept="image/*" style="display:none">
-      <button class="btn secondary small mt" data-action="add-growth-photo" data-id="${esc(culture.id)}">${icon('camera', 16)} Добавить фото</button>
+      <input type="file" id="hist-file-cam" accept="image/*" capture="environment" style="display:none">
+      <div style="display:flex;gap:8px">
+        <button class="btn secondary small mt" data-action="add-growth-photo-cam">${icon('camera', 16)} Камера</button>
+        <button class="btn secondary small mt" data-action="add-growth-photo">Из галереи</button>
+      </div>
     </div>`;
+}
+
+// Полноэкранный просмотр фото из хроники
+function showPhotoModal(photo) {
+  const d = new Date(photo.createdAt);
+  openModal(`
+    <img src="${photo.uri}" style="width:100%;border-radius:12px" alt="">
+    <div class="muted small mt" style="text-align:center">${formatDateRu(toISODate(d))}, ${d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</div>
+    <div class="modal-actions mt">
+      <button class="btn" data-close>Закрыть</button>
+    </div>`);
 }
 
 function showSowingModal(plantId) {
@@ -1304,6 +1322,15 @@ view.addEventListener('click', async (e) => {
       case 'add-sowing': showSowingModal(el.dataset.id); break;
       case 'add-harvest': showHarvestModal(el.dataset.id); break;
       case 'add-growth-photo': view.querySelector('#hist-file').click(); break;
+      case 'add-growth-photo-cam': view.querySelector('#hist-file-cam').click(); break;
+      case 'open-photo': {
+        const id = location.hash.match(/^#culture\/([^/]+)/);
+        if (!id) break;
+        const photos = await db.getPhotosByPlant(id[1]);
+        const p = photos.find((x) => x.id === el.dataset.id);
+        if (p) showPhotoModal(p);
+        break;
+      }
     }
   } catch (err) {
     toast(err.message || 'Ошибка', 4000);
@@ -1312,7 +1339,7 @@ view.addEventListener('click', async (e) => {
 
 view.addEventListener('change', (e) => {
   if (e.target.id === 'photo-file' || e.target.id === 'photo-file-cam') setupPhotoInput(e.target.files[0]);
-  if (e.target.id === 'hist-file' && e.target.files[0]) {
+  if ((e.target.id === 'hist-file' || e.target.id === 'hist-file-cam') && e.target.files[0]) {
     const id = location.hash.match(/^#culture\/([^/]+)/);
     if (id) addGrowthPhoto(id[1], e.target.files[0]);
   }
