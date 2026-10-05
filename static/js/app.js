@@ -222,7 +222,11 @@ function showAddCultureModal() {
 
     <div id="add-photo-mode">
       <input type="file" id="np-file" accept="image/*" style="display:none">
-      <button class="btn secondary" data-np="pick">${icon('camera', 20)} Выбрать / сделать фото</button>
+      <input type="file" id="np-file-cam" accept="image/*" capture="environment" style="display:none">
+      <div style="display:flex;gap:8px">
+        <button class="btn secondary" data-np="pick-cam" style="flex:1">${icon('camera', 20)} Камера</button>
+        <button class="btn secondary" data-np="pick" style="flex:1">Из галереи</button>
+      </div>
       <img id="np-preview" class="photo-preview mt" style="max-height:180px">
       <button class="btn mt" data-np="identify" disabled>${icon('sprout', 18)} Определить (1 запрос)</button>
       <div id="np-result" class="mt"></div>
@@ -264,9 +268,11 @@ function showAddCultureModal() {
   });
 
   $('[data-np="pick"]').addEventListener('click', () => $('#np-file').click());
-  $('#np-file').addEventListener('change', async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
+  $('[data-np="pick-cam"]').addEventListener('click', () => $('#np-file-cam').click());
+  for (const fileInput of [$('#np-file'), $('#np-file-cam')]) {
+    fileInput.addEventListener('change', async (e) => {
+      const file = e.target.files && e.target.files[0];
+      if (!file) return;
     const dataUrl = await new Promise((res) => {
       const r = new FileReader();
       r.onload = () => res(r.result);
@@ -281,7 +287,8 @@ function showAddCultureModal() {
     $('#np-result').innerHTML = '';
     chosen = null;
     $('#np-save').disabled = true;
-  });
+    });
+  }
 
   $('[data-np="identify"]').addEventListener('click', async () => {
     if (!photoBase64) return;
@@ -426,11 +433,15 @@ async function screenCulture(m) {
       </div>
       <div class="field" style="margin:10px 0 0"><span>Кличка</span>
         <input type="text" id="ci-pet" value="${esc(culture.petName || '')}" placeholder="Не задана"></div>
+      <div style="display:flex;gap:10px">
+        <div class="field" style="flex:1;margin:10px 0 0"><span>Сорт</span>
+          <input type="text" id="ci-variety" value="${esc(culture.variety || '')}" placeholder="Не указан"></div>
+      </div>
       <div class="field" style="margin:10px 0 0"><span>Группа (справочник видов)</span>
         <select id="ci-group" data-ci="group">
           <option value="">— без категории —</option>
           ${Object.entries(GROUPS).map(([code, g]) =>
-            `<option value="${code}" ${culture.groupCode === code ? 'selected' : ''}>${g.emoji} ${g.name}</option>`).join('')}
+            `<option value="${code}" ${culture.groupCode === code ? 'selected' : ''}>${g.name}</option>`).join('')}
         </select></div>
       <div class="field" style="margin:0"><span>Где растёт</span>
         ${locationSelectHTML('ci-location', culture.locationId)}</div>
@@ -996,7 +1007,11 @@ async function screenPhoto() {
       <h2>Что с растением?</h2>
       <p class="muted">Сфотографируйте растение — AI определит вид, болезни, вредителей и подскажет, что делать.</p>
       <input type="file" id="photo-file" accept="image/*" style="display:none">
-      <button class="btn" data-action="pick-photo">${icon('camera', 20)} Выбрать / сделать фото</button>
+      <input type="file" id="photo-file-cam" accept="image/*" capture="environment" style="display:none">
+      <div style="display:flex;gap:8px">
+        <button class="btn" data-action="pick-photo-cam" style="flex:1">${icon('camera', 20)} Камера</button>
+        <button class="btn" data-action="pick-photo" style="flex:1">Из галереи</button>
+      </div>
       <img id="photo-preview" class="photo-preview mt">
       <label class="field mt"><span>Пояснение (необязательно)</span>
         <input type="text" id="photo-context" placeholder="Например: что за пятна на листьях смородины?"></label>
@@ -1035,7 +1050,9 @@ async function downscaleToBase64(file, maxSide = 1024, quality = 0.8) {
 }
 
 async function analyzePhoto() {
-  const fileInput = view.querySelector('#photo-file');
+  const fileInput = view.querySelector('#photo-file-cam')?.files?.[0]
+    ? view.querySelector('#photo-file-cam')
+    : view.querySelector('#photo-file');
   if (!fileInput.files || !fileInput.files[0]) { toast('Сначала выберите фото'); return; }
   setLoading('Сжимаем фото и спрашиваем AI…');
   let base64;
@@ -1177,6 +1194,7 @@ view.addEventListener('click', async (e) => {
       case 'ai-history': await askFree(el.dataset.q); break;
       case 'ai-clear-history': localStorage.removeItem('ai_history'); route(); break;
       case 'pick-photo': view.querySelector('#photo-file').click(); break;
+      case 'pick-photo-cam': view.querySelector('#photo-file-cam').click(); break;
       case 'analyze-photo': await analyzePhoto(); break;
       case 'open-templates': location.hash = '#templates'; break;
       case 'open-template': location.hash = `#templates/${el.dataset.id}`; break;
@@ -1211,7 +1229,7 @@ view.addEventListener('click', async (e) => {
 });
 
 view.addEventListener('change', (e) => {
-  if (e.target.id === 'photo-file') setupPhotoInput(e.target.files[0]);
+  if (e.target.id === 'photo-file' || e.target.id === 'photo-file-cam') setupPhotoInput(e.target.files[0]);
   if (e.target.id === 'hist-file' && e.target.files[0]) {
     const id = location.hash.match(/^#culture\/([^/]+)/);
     if (id) addGrowthPhoto(id[1], e.target.files[0]);
@@ -1221,8 +1239,8 @@ view.addEventListener('change', (e) => {
     localStorage.setItem('onboarded', '1');
     toast('Зона сохранена: ' + ZONES[e.target.value]);
   }
-  // карточка культуры: смена группы/локации/клички
-  if (e.target.id === 'ci-group' || e.target.id === 'ci-location' || e.target.id === 'ci-pet') {
+  // карточка культуры: смена группы/локации/клички/сорта
+  if (['ci-group', 'ci-location', 'ci-pet', 'ci-variety'].includes(e.target.id)) {
     const id = location.hash.match(/^#culture\/([^/]+)/);
     if (!id) return;
     db.getCulture(id[1]).then((c) => {
@@ -1232,16 +1250,18 @@ view.addEventListener('change', (e) => {
         if (!c.groupCode) c.subgroupCode = null;
       } else if (e.target.id === 'ci-pet') {
         c.petName = e.target.value.trim() || null;
+      } else if (e.target.id === 'ci-variety') {
+        c.variety = e.target.value.trim() || null;
       } else {
         c.locationId = e.target.value || null;
       }
       db.putCulture(c).then(() => {
-        if (e.target.id !== 'ci-pet') {
+        if (e.target.id === 'ci-pet' || e.target.id === 'ci-variety') {
+          pageTitle.textContent = displayName(c) + (c.variety && !c.petName ? ` (${c.variety})` : '');
+          toast('Сохранено');
+        } else {
           toast(e.target.id === 'ci-group' ? 'Группа обновлена' : 'Локация обновлена');
           route();
-        } else {
-          pageTitle.textContent = displayName(c);
-          toast('Кличка сохранена');
         }
       });
     });
