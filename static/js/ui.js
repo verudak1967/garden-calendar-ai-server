@@ -108,6 +108,22 @@ export function syncDateField(inputEl) {
   }
 }
 
+// Убирает Markdown-разметку, оставляя чистый текст.
+// Порт stripMarkdown из Android (AiResultScreen.kt); заголовки — заглавными.
+export function stripMarkdown(text) {
+  let result = String(text || '');
+  result = result.replace(/^#{1,6}\s*(.+)$/gm, (_, h) => h.toUpperCase());
+  result = result.replace(/\*\*(.+?)\*\*/g, '$1');
+  result = result.replace(/\*(.+?)\*/g, '$1');
+  result = result.replace(/__(.+?)__/g, '$1');
+  result = result.replace(/_(.+?)_/g, '$1');
+  result = result.replace(/`(.+?)`/g, '$1');
+  result = result.replace(/^\s*[-*]\s+/gm, '• ');
+  result = result.replace(/\[(.+?)\]\(.+?\)/g, '$1');
+  result = result.replace(/\n{3,}/g, '\n\n');
+  return result.trim();
+}
+
 // ── Дата-утилиты, паритет с Android (GardenViewModel/TemplatesScreen) ──
 
 export const pad2 = (n) => String(n).padStart(2, '0');

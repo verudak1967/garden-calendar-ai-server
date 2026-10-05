@@ -16,6 +16,7 @@ import {
   esc, toast, setLoading, hideLoading, openModal, closeModal, confirmDialog, uuid,
   formatDateRu, dateFieldHTML, syncDateField, initDateFieldPicker, toISODate,
   parseISODate, addDays, usdaZoneToDayShift, shiftMMDD, determinePlanYear,
+  stripMarkdown,
 } from './ui.js';
 
 const view = document.getElementById('view');
@@ -499,7 +500,7 @@ async function saveAiToNote(key) {
   if (!rec) { toast('Ответ не найден'); return; }
   await db.putNote({
     id: uuid(), cultureId: rec.cultureId || null,
-    title: rec.title, content: rec.text, createdAt: Date.now(),
+    title: rec.title, content: stripMarkdown(rec.text), createdAt: Date.now(),
   });
   toast(rec.cultureId ? 'Сохранено в заметки растения' : 'Сохранено в общие заметки');
 }
@@ -507,6 +508,7 @@ async function saveAiToNote(key) {
 async function shareAiText(key) {
   const rec = aiTextStore.get(key);
   if (!rec) return;
+  const text = stripMarkdown(rec.text);
   if (navigator.share) {
     try { await navigator.share({ title: 'AI Ботаник', text: rec.text }); } catch { /* пользователь отменил */ }
     return;
