@@ -85,6 +85,71 @@ function displayName(c) {
   return (c && c.petName) ? c.petName : (c ? c.name : '');
 }
 
+// ── Тамагочи: возраст, статус самочувствия, стрик, достижения ──
+// Всё считается локально по задачам — ноль AI-запросов.
+
+const WATERING_RE = /полив|полить|полей|напоить|орошен/i;
+
+const HEALTH = {
+  ok:   { color: '#43A047', label: 'Всё хорошо' },
+  warn: { color: '#FB8C00', label: 'Пора полить' },
+  alert:{ color: '#E53935', label: 'Давно не поливали' },
+  none: { color: '#B0BEC5', label: 'Полив не запланирован' },
+};
+
+function wateringTasksOf(tasks, cultureId) {
+  return tasks.filter((t) => t.cultureId === cultureId && WATERING_RE.test(t.title));
+}
+
+function healthStatus(wTasks) {
+  if (!wTasks.length) return 'none';
+  const today = toISODate(new Date());
+  const overdue = wTasks.filter((t) => t.status === 'planned' && t.dueDate && t.dueDate < today).length;
+  if (overdue >= 2) return 'alert';
+  if (overdue === 1) return 'warn';
+  return 'ok';
+}
+
+// Стрик: сколько поливов подряд закрыто вовремя (с запасом в 1 сутки)
+function wateringStreak(wTasks) {
+  const today = toISODate(new Date());
+  if (wTasks.some((t) => t.status === 'planned' && t.dueDate && t.dueDate < today)) return 0;
+  const done = wTasks
+    .filter((t) => t.status === 'completed' && t.completedDate)
+    .sort((a, b) => String(b.dueDate || '').localeCompare(String(a.dueDate || '')));
+  let streak = 0;
+  for (const t of done) {
+    const grace = toISODate(addDays(parseISODate(t.dueDate), 1));
+    if (t.completedDate <= grace) streak++;
+    else break;
+  }
+  return streak;
+}
+
+function ageDays(c) {
+  return Math.floor((Date.now() - (c.createdAt || Date.now())) / 86_400_000);
+}
+
+function daysRu(n) {
+  const a = n % 10, b = n % 100;
+  if (a === 1 && b !== 11) return 'день';
+  if (a >= 2 && a <= 4 && (b < 10 || b >= 20)) return 'дня';
+  return 'дней';
+}
+
+function ageText(c) {
+  const d = ageDays(c);
+  return d <= 0 ? 'с нами первый день' : `с нами ${d} ${daysRu(d)}`;
+}
+
+function getAchievements(c, wTasks, harvests) {
+  const list = [];
+  if (ageDays(c) >= 30) list.push('30 дней вместе');
+  if (wateringStreak(wTasks) >= 7) list.push('Полив без пропусков — неделя');
+  if (harvests.length) list.push('Первый урожай');
+  return list;
+}
+
 // ── Роутинг ────────────────────────────────────────────────
 
 const routes = [
@@ -136,6 +201,9 @@ async function screenGarden() {
     c.groupCode ? groupLabel(c.groupCode) : 'без категории',
   ].filter(Boolean).join(' · ');
 
+  const allTasks = await db.getAllTasks();
+  const healthOf = (c) => healthStatus(wateringTasksOf(allTasks, c.id));
+
   const row = (c) => `
     <div class="culture-item" data-action="open-culture" data-id="${esc(c.id)}">
       <div class="culture-emoji">${groupIconHTML(c.groupCode)}</div>
@@ -144,6 +212,7 @@ async function screenGarden() {
         <div class="culture-sub">${esc(sub(c))}</div>
       </div>
       ${!c.groupCode ? '<span class="task-date" style="background:#FFF3E0;color:#E65100">без группы</span>' : ''}
+      <span class="dot" style="background:${HEALTH[healthOf(c)].color}" title="${HEALTH[healthOf(c)].label}"></span>
       <span class="muted">›</span>
     </div>`;
 
@@ -418,6 +487,11 @@ async function screenCulture(m) {
   pageTitle.textContent = displayName(culture) + (culture.variety && !culture.petName ? ` (${culture.variety})` : '');
 
   const locations = await db.getLocations();
+  const [allTasks, harvests] = await Promise.all([db.getAllTasks(), db.getHarvestsByPlant(id)]);
+  const wTasks = wateringTasksOf(allTasks, id);
+  const health = HEALTH[healthStatus(wTasks)];
+  const streak = wateringStreak(wTasks);
+  const achievements = getAchievements(culture, wTasks, harvests);
   const tabs = [
     ['tasks', 'Задачи'], ['care', 'Уход'], ['pests', 'Вредители'],
     ['diseases', 'Болезни'], ['notes', 'Заметки'], ['history', 'История'],
@@ -445,6 +519,14 @@ async function screenCulture(m) {
         </select></div>
       <div class="field" style="margin:0"><span>Где растёт</span>
         ${locationSelectHTML('ci-location', culture.locationId)}</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <span class="dot" style="background:${health.color}"></span>
+        <span class="small" style="font-weight:600">${health.label}</span>
+        <span class="muted small">· ${esc(ageText(culture))}</span>
+        ${streak > 0 ? `<span class="muted small">· полив без пропусков: ${streak}</span>` : ''}
+      </div>
+      ${achievements.length ? `<div style="margin-top:8px">${achievements.map((a) =>
+        `<span class="ach-badge">${icon('award', 14)} ${esc(a)}</span>`).join('')}</div>` : ''}
     </div>
     <div class="tabs">${tabs.map(([key, label]) =>
       `<div class="tab ${key === tab ? 'active' : ''}" data-action="culture-tab" data-tab="${key}">${label}</div>`).join('')}

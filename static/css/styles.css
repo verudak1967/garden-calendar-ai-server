@@ -321,6 +321,28 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--green); bor
 .nav-ico svg { display: block; }
 .culture-emoji svg { display: block; }
 .empty .big svg { display: block; margin: 0 auto 10px; color: var(--green); opacity: 0.55; }
+
+/* ── Тамагочи ─────────────────────────────── */
+.dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+}
+.ach-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green-dark);
+  background: var(--green-light);
+  margin: 2px 6px 2px 0;
+}
+.ach-badge svg { color: var(--green-dark); }
 .btn svg { vertical-align: -3px; margin-right: 5px; }
 .fab svg { display: block; }
 .task-desc svg { vertical-align: -2px; }
