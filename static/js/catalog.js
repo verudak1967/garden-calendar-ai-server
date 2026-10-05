@@ -154,7 +154,7 @@ export const DEFAULT_LOCATIONS = [
   { id: 'loc-green', name: 'Теплица', type: 'GREENHOUSE' },
   { id: 'loc-room', name: 'Дом', type: 'ROOM' },
   { id: 'loc-balcony', name: 'Балкон', type: 'BALCONY' },
-  { id: 'loc-seed', name: 'Рассадник', type: 'SEEDLING' },
+  { id: 'loc-seed', name: 'Рассада', type: 'SEEDLING' },
 ];
 
 // Системные теги (модель v2, п. 5 промпта; климатические — задел

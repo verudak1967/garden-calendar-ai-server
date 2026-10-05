@@ -76,17 +76,21 @@ async function run(store, mode, fn) {
 
 // ── Миграция v1 → v2 (однократно) ─────────────────────────
 
-export async function migrateToV2() {
-  if (localStorage.getItem('schema_v2') === 'done') return;
-
+// Справочники (локации/теги) обновляются при каждом запуске:
+// имена по умолчанию могут меняться между версиями приложения
+export async function ensureRefData() {
   for (const loc of DEFAULT_LOCATIONS) {
-    const existing = await run('locations', 'readonly', (s) => s.get(loc.id));
-    if (!existing) await run('locations', 'readwrite', (s) => s.put(loc));
+    await run('locations', 'readwrite', (s) => s.put(loc));
   }
   for (const tag of SYSTEM_TAGS) {
     const existing = await run('tags', 'readonly', (s) => s.get(tag.code));
     if (!existing) await run('tags', 'readwrite', (s) => s.put(tag));
   }
+}
+
+export async function migrateToV2() {
+  await ensureRefData();
+  if (localStorage.getItem('schema_v2') === 'done') return;
 
   const typeToLoc = { OPEN_GROUND: 'loc-open', GREENHOUSE: 'loc-green', SEEDLING: 'loc-seed' };
   const cultures = await getCultures();
