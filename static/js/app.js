@@ -9,7 +9,7 @@ import * as db from './db.js';
 import { icon } from './icons.js';
 import { renderMarkdown } from './md.js';
 import {
-  GROUPS, SUBGROUPS, SPECIES, groupLabel, groupEmoji, subgroupLabel,
+  GROUPS, SUBGROUPS, SPECIES, groupLabel, groupIconHTML, subgroupLabel,
   findSpecies, speciesByKey, DEFAULT_LOCATIONS,
 } from './catalog.js';
 import {
@@ -80,6 +80,11 @@ function normTask(t) {
   return t;
 }
 
+// Отображаемое имя растения: кличка приоритетнее видового названия
+function displayName(c) {
+  return (c && c.petName) ? c.petName : (c ? c.name : '');
+}
+
 // ── Роутинг ────────────────────────────────────────────────
 
 const routes = [
@@ -126,15 +131,16 @@ async function screenGarden() {
   if (!localStorage.getItem('onboarded')) showFirstZoneDialog();
 
   const sub = (c) => [
+    c.petName ? c.name : null,
     c.variety,
     c.groupCode ? groupLabel(c.groupCode) : 'без категории',
   ].filter(Boolean).join(' · ');
 
   const row = (c) => `
     <div class="culture-item" data-action="open-culture" data-id="${esc(c.id)}">
-      <div class="culture-emoji">${c.groupCode ? groupEmoji(c.groupCode) : '🌱'}</div>
+      <div class="culture-emoji">${groupIconHTML(c.groupCode)}</div>
       <div style="flex:1">
-        <div class="culture-name">${esc(c.name)}</div>
+        <div class="culture-name">${esc(displayName(c))}</div>
         <div class="culture-sub">${esc(sub(c))}</div>
       </div>
       ${!c.groupCode ? '<span class="task-date" style="background:#FFF3E0;color:#E65100">без группы</span>' : ''}
@@ -153,12 +159,29 @@ async function screenGarden() {
       ${list.map(row).join('')}
     </div>`;
 
-  view.innerHTML = (cultures.length
-    ? sections.map((s) => sectionHTML(s.title, s.list)).join('')
-      + (unplaced.length ? sectionHTML('Не размещено', unplaced) : '')
-    : `<div class="empty"><span class="big">${icon('sprout', 56)}</span>Здесь будут ваши растения.<br>Добавьте по фото или из шаблона.</div>`)
-    + `<button class="btn secondary" data-action="open-templates">${icon('list', 18)} Готовые шаблоны планов</button>
-       <button class="fab" data-action="add-culture" aria-label="Добавить">${icon('plus', 26)}</button>`;
+  const renderList = (query = '') => {
+    const q = query.trim().toLowerCase();
+    const match = (c) => !q || [c.name, c.petName, c.variety, c.latinName]
+      .some((v) => v && v.toLowerCase().includes(q));
+    const fSections = sections.map((s) => ({ ...s, list: s.list.filter(match) })).filter((s) => s.list.length);
+    const fUnplaced = unplaced.filter(match);
+    const total = fSections.reduce((n, s) => n + s.list.length, 0) + fUnplaced.length;
+    document.getElementById('garden-list').innerHTML = (cultures.length === 0
+      ? `<div class="empty"><span class="big">${icon('sprout', 56)}</span>Здесь будут ваши растения.<br>Добавьте по фото или из шаблона.</div>`
+      : total === 0
+        ? '<div class="empty">Ничего не найдено</div>'
+        : fSections.map((s) => sectionHTML(s.title, s.list)).join('')
+          + (fUnplaced.length ? sectionHTML('Не размещено', fUnplaced) : ''));
+  };
+
+  view.innerHTML = `
+    ${cultures.length ? `<div class="card"><input type="text" id="garden-search" placeholder="Поиск: название, кличка, сорт…" value="${esc(window.__gardenQuery || '')}"></div>` : ''}
+    <div id="garden-list"></div>
+    <button class="btn secondary" data-action="open-templates">${icon('list', 18)} Готовые шаблоны планов</button>
+    <button class="fab" data-action="add-culture" aria-label="Добавить">${icon('plus', 26)}</button>`;
+  renderList(window.__gardenQuery || '');
+  const searchEl = document.getElementById('garden-search');
+  if (searchEl) searchEl.addEventListener('input', () => renderList(searchEl.value));
 
   refreshUsageBadge();
 }
@@ -211,11 +234,13 @@ function showAddCultureModal() {
         <datalist id="species-list">${SPECIES.map((sp) =>
           `<option value="${esc(sp.name)}">${groupLabel(sp.g)} · ${esc(sp.latin || '')}</option>`).join('')}</datalist>
         <div class="muted small mt" id="nm-match" style="margin-top:4px"></div></label>
-      <label class="field"><span>Сорт / кличка</span>
-        <input type="text" id="nm-variety" autocomplete="off"></label>
+    <label class="field"><span>Сорт</span>
+      <input type="text" id="nm-variety" autocomplete="off"></label>
     </div>
 
     <div class="field mt"><span>Где растёт</span>${locationSelectHTML('np-location', null)}</div>
+    <label class="field"><span>Кличка (необязательно)</span>
+      <input type="text" id="np-pet" placeholder="Бенедикт, Пьер…" autocomplete="off"></label>
     <div class="modal-actions">
       <button class="btn secondary" data-close>Отмена</button>
       <button class="btn" id="np-save" disabled>Добавить</button>
@@ -273,11 +298,11 @@ function showAddCultureModal() {
       $('#np-result').innerHTML = resp.candidates.map((c, i) => {
         const known = findSpecies(c.name);
         const g = known ? groupLabel(known.g) : (groupLabel(c.groupCode) || 'категория уточняется');
-        const e = known ? groupEmoji(known.g) : (groupEmoji(c.groupCode) || '🌱');
+        const ic = known ? groupIconHTML(known.g, 16) : groupIconHTML(c.groupCode, 16);
         return `<label class="check-row" style="border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:6px">
           <input type="radio" name="np-cand" value="${i}" ${i === 0 ? 'checked' : ''}>
           <span><b>${esc(c.name)}</b> ${c.latinName ? `<span class="muted small">${esc(c.latinName)}</span>` : ''}
-          <br><span class="small">${e} ${esc(g)} · уверенность ${Math.round((c.confidence || 0) * 100)}%</span></span>
+          <br><span class="small">${ic} ${esc(g)} · уверенность ${Math.round((c.confidence || 0) * 100)}%</span></span>
         </label>`;
       }).join('');
       $('#np-result').querySelectorAll('input[name=np-cand]').forEach((r) => {
@@ -295,7 +320,7 @@ function showAddCultureModal() {
     const sp = findSpecies($('#nm-name').value.trim());
     chosen = { manual: true, species: sp };
     $('#nm-match').textContent = sp
-      ? `${groupEmoji(sp.g)} ${groupLabel(sp.g)} · ${subgroupLabel(sp.s)}${sp.latin ? ' · ' + sp.latin : ''} — категория подставлена из справочника`
+      ? `${groupLabel(sp.g)} · ${subgroupLabel(sp.s)}${sp.latin ? ' · ' + sp.latin : ''} — категория подставлена из справочника`
       : 'Вид не найден в справочнике — растение будет «без категории», её можно выбрать позже.';
     $('#np-save').disabled = !$('#nm-name').value.trim();
   });
@@ -309,6 +334,7 @@ function showAddCultureModal() {
       await db.putCulture({
         id: uuid(),
         name, variety: $('#nm-variety').value.trim() || null,
+        petName: $('#np-pet').value.trim() || null,
         speciesKey: sp ? sp.k : null,
         latinName: sp ? (sp.latin || null) : null,
         groupCode: sp ? sp.g : null, subgroupCode: sp ? sp.s : null,
@@ -324,6 +350,7 @@ function showAddCultureModal() {
       await db.putCulture({
         id: cultureId,
         name: chosen.name, variety: null,
+        petName: $('#np-pet').value.trim() || null,
         speciesKey: sp ? sp.k : null,
         latinName: sp ? (sp.latin || chosen.latinName) : (chosen.latinName || null),
         groupCode, subgroupCode: sp ? sp.s : null,
@@ -381,7 +408,7 @@ async function screenCulture(m) {
 
   const culture = await db.getCulture(id);
   if (!culture) { location.hash = '#garden'; return; }
-  pageTitle.textContent = culture.name + (culture.variety ? ` (${culture.variety})` : '');
+  pageTitle.textContent = displayName(culture) + (culture.variety && !culture.petName ? ` (${culture.variety})` : '');
 
   const locations = await db.getLocations();
   const tabs = [
@@ -391,12 +418,14 @@ async function screenCulture(m) {
   view.innerHTML = `
     <div class="card">
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <span>${groupEmoji(culture.groupCode)}</span>
+        <span>${groupIconHTML(culture.groupCode, 20)}</span>
         <span class="small">${esc(culture.groupCode ? groupLabel(culture.groupCode) +
           (culture.subgroupCode ? ' · ' + subgroupLabel(culture.subgroupCode) : '') : 'без категории')}</span>
         ${culture.latinName ? `<span class="muted small">${esc(culture.latinName)}</span>` : ''}
         ${culture.source === 'AI_PHOTO' ? '<span class="task-date">по фото</span>' : ''}
       </div>
+      <div class="field" style="margin:10px 0 0"><span>Кличка</span>
+        <input type="text" id="ci-pet" value="${esc(culture.petName || '')}" placeholder="Не задана"></div>
       <div class="field" style="margin:10px 0 0"><span>Группа (справочник видов)</span>
         <select id="ci-group" data-ci="group">
           <option value="">— без категории —</option>
@@ -830,7 +859,7 @@ async function screenCalendar() {
     localStorage.setItem('cal_date', val);
     const day = parseISODate(val);
     const cultures = await db.getCultures();
-    const names = Object.fromEntries(cultures.map((c) => [c.id, c.name]));
+    const names = Object.fromEntries(cultures.map((c) => [c.id, displayName(c)]));
     const all = (await db.getAllTasks()).map(normTask);
 
     const inRange = (from, to) => all.filter((t) => {
@@ -1053,7 +1082,7 @@ async function screenSettings() {
       <p class="muted small">Растения с историей — не в саду, но и не удалённые.</p>
       ${archived.length ? archived.map((c) => `
         <div class="culture-item">
-          <div class="culture-emoji">${groupEmoji(c.groupCode)}</div>
+          <div class="culture-emoji">${groupIconHTML(c.groupCode)}</div>
           <div style="flex:1">
             <div class="culture-name">${esc(c.name)}</div>
             <div class="culture-sub">в архиве</div>
@@ -1192,8 +1221,8 @@ view.addEventListener('change', (e) => {
     localStorage.setItem('onboarded', '1');
     toast('Зона сохранена: ' + ZONES[e.target.value]);
   }
-  // карточка культуры: смена группы/локации
-  if (e.target.id === 'ci-group' || e.target.id === 'ci-location') {
+  // карточка культуры: смена группы/локации/клички
+  if (e.target.id === 'ci-group' || e.target.id === 'ci-location' || e.target.id === 'ci-pet') {
     const id = location.hash.match(/^#culture\/([^/]+)/);
     if (!id) return;
     db.getCulture(id[1]).then((c) => {
@@ -1201,12 +1230,19 @@ view.addEventListener('change', (e) => {
       if (e.target.id === 'ci-group') {
         c.groupCode = e.target.value || null;
         if (!c.groupCode) c.subgroupCode = null;
+      } else if (e.target.id === 'ci-pet') {
+        c.petName = e.target.value.trim() || null;
       } else {
         c.locationId = e.target.value || null;
       }
       db.putCulture(c).then(() => {
-        toast(e.target.id === 'ci-group' ? 'Группа обновлена' : 'Локация обновлена');
-        route();
+        if (e.target.id !== 'ci-pet') {
+          toast(e.target.id === 'ci-group' ? 'Группа обновлена' : 'Локация обновлена');
+          route();
+        } else {
+          pageTitle.textContent = displayName(c);
+          toast('Кличка сохранена');
+        }
       });
     });
   }

@@ -3,12 +3,14 @@
 // (species_custom в IndexedDB). Группа вида фиксируется один раз —
 // все записи одного вида всегда попадают в одну группу.
 
+import { icon } from './icons.js';
+
 export const GROUPS = {
-  '01': { name: 'Плодовые деревья', emoji: '🍎' },
-  '02': { name: 'Ягодные', emoji: '🫐' },
-  '03': { name: 'Овощные и зелёные', emoji: '🥕' },
-  '04': { name: 'Декоративные', emoji: '🌸' },
-  '05': { name: 'Комнатные', emoji: '🪴' },
+  '01': { name: 'Плодовые деревья', icon: 'tree' },
+  '02': { name: 'Ягодные', icon: 'berry' },
+  '03': { name: 'Овощные и зелёные', icon: 'carrot' },
+  '04': { name: 'Декоративные', icon: 'flower' },
+  '05': { name: 'Комнатные', icon: 'pot' },
 };
 
 export const SUBGROUPS = {
@@ -124,7 +126,10 @@ export const SPECIES = S.map(([k, name, latin, g, s, family, templateId]) => ({
 const BY_NAME = new Map(SPECIES.map((sp) => [sp.name.toLowerCase(), sp]));
 
 export function groupLabel(code) { return GROUPS[code] ? GROUPS[code].name : ''; }
-export function groupEmoji(code) { return GROUPS[code] ? GROUPS[code].emoji : '🌱'; }
+// SVG-иконка группы в стиле нижней панели (size регулируется местом вызова)
+export function groupIconHTML(code, size = 22) {
+  return GROUPS[code] ? icon(GROUPS[code].icon, size) : icon('sprout', size);
+}
 export function subgroupLabel(code) { return SUBGROUPS[code] ? SUBGROUPS[code].name : ''; }
 
 // Поиск вида по имени: точное совпадение → вхождение (порядок «Томаты»/«Томат»).
