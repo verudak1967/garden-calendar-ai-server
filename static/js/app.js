@@ -85,6 +85,7 @@ const routes = [
   { re: /^#templates\/([\w-]+)$/,     fn: screenTemplateDetail, title: 'Шаблон',      nav: 'garden' },
   { re: /^#calendar$/,                fn: screenCalendar,       title: 'Календарь',   nav: 'calendar' },
   { re: /^#ai$/,                      fn: screenAiHandbook,     title: 'Справка AI',  nav: 'ai' },
+  { re: /^#notes$/,                   fn: screenNotes,          title: 'Заметки',     nav: 'notes' },
   { re: /^#photo$/,                   fn: screenPhoto,          title: 'Анализ фото', nav: 'photo' },
   { re: /^#settings$/,                fn: screenSettings,       title: 'Ещё',         nav: 'settings' },
 ];
@@ -590,6 +591,48 @@ async function askFree(predefined) {
   }
 }
 
+// ── Экран «Заметки по саду» (общие, паритет AppTab.NOTES) ──
+
+async function screenNotes() {
+  pageTitle.textContent = 'Заметки';
+  const notes = await db.getGeneralNotes();
+  view.innerHTML = `
+    <div class="card">
+      <h2>Заметки по саду</h2>
+      <p class="muted small">Общий дневник: наблюдения, покупки, планы. Заметки по конкретным растениям — на экране растения.</p>
+      <label class="field"><span>Заголовок</span>
+        <input type="text" id="gn-title" placeholder="Например: весенний план" autocomplete="off"></label>
+      <label class="field"><span>Текст</span>
+        <textarea id="gn-text" placeholder="Что произошло в саду…"></textarea></label>
+      <button class="btn secondary" data-action="add-gnote">${icon('note', 18)} Добавить заметку</button>
+    </div>
+    ${notes.length ? notes.map((n) => `
+      <div class="card" style="cursor:pointer" data-action="open-gnote" data-id="${esc(n.id)}">
+        <div class="task-title">${esc(n.title || 'Без названия')}</div>
+        <div class="muted small">${new Date(n.createdAt).toLocaleString('ru-RU')}</div>
+        <p class="small" style="margin:6px 0 0">${esc((n.content || '').slice(0, 120))}${(n.content || '').length > 120 ? '…' : ''}</p>
+      </div>`).join('')
+    : `<div class="empty"><span class="big">${icon('note', 56)}</span>Общих заметок пока нет</div>`}`;
+}
+
+function showGeneralNoteModal(note) {
+  const back = openModal(`
+    <h2>${esc(note.title || 'Без названия')}</h2>
+    <div class="muted small">${new Date(note.createdAt).toLocaleString('ru-RU')}</div>
+    <p style="margin:12px 0; white-space:pre-wrap">${esc(note.content || '')}</p>
+    <div class="modal-actions">
+      <button class="btn secondary" data-close>Закрыть</button>
+      <button class="btn danger" id="gn-delete">Удалить</button>
+    </div>`);
+  back.querySelector('#gn-delete').addEventListener('click', async () => {
+    if (await confirmDialog('Удалить заметку?', 'Действие необратимо.')) {
+      await db.deleteNote(note.id);
+      closeModal();
+      route();
+    }
+  });
+}
+
 // ── Экран «Анализ фото» ────────────────────────────────────
 
 async function screenPhoto() {
@@ -745,6 +788,23 @@ view.addEventListener('click', async (e) => {
         break;
       }
       case 'del-note': await db.deleteNote(el.dataset.id); route(); break;
+      case 'add-gnote': {
+        const content = view.querySelector('#gn-text').value.trim();
+        if (!content) { toast('Введите текст заметки'); return; }
+        await db.putNote({
+          id: uuid(), cultureId: null,
+          title: view.querySelector('#gn-title').value.trim() || null,
+          content, createdAt: Date.now(),
+        });
+        route();
+        break;
+      }
+      case 'open-gnote': {
+        const notes = await db.getGeneralNotes();
+        const n = notes.find((x) => x.id === el.dataset.id);
+        if (n) showGeneralNoteModal(n);
+        break;
+      }
       case 'ai-ask': await askFree(); break;
       case 'ai-history': await askFree(el.dataset.q); break;
       case 'ai-clear-history': localStorage.removeItem('ai_history'); route(); break;
@@ -776,7 +836,7 @@ document.addEventListener('change', (e) => {
 // ── Инициализация ──────────────────────────────────────────
 
 // Иконки нижней навигации
-const NAV_ICONS = { garden: 'sprout', calendar: 'calendar', ai: 'book', photo: 'camera', settings: 'sliders' };
+const NAV_ICONS = { garden: 'sprout', calendar: 'calendar', ai: 'book', notes: 'note', photo: 'camera', settings: 'sliders' };
 document.querySelectorAll('.bottomnav a').forEach((a) => {
   const span = a.querySelector('.nav-ico');
   if (span && NAV_ICONS[a.dataset.nav]) span.innerHTML = icon(NAV_ICONS[a.dataset.nav]);

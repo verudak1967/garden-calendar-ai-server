@@ -110,6 +110,15 @@ export async function getNotesByCulture(cultureId) {
   const all = await run('notes', 'readonly', (s) => s.index('cultureId').getAll(cultureId));
   return (all || []).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
+
+// Общие заметки по саду (cultureId = null). null не индексируется в IndexedDB,
+// поэтому фильтруем из полного списка.
+export async function getGeneralNotes() {
+  const all = await run('notes', 'readonly', (s) => s.getAll());
+  return (all || [])
+    .filter((n) => n.cultureId == null)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
 export function putNote(note) {
   return run('notes', 'readwrite', (s) => s.put(note));
 }

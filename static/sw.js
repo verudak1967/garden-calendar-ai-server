@@ -1,5 +1,5 @@
 // Service Worker: кэш app-shell, API никогда не кэшируем.
-const CACHE = 'ai-botanik-v8';
+const CACHE = 'ai-botanik-v9';
 const SHELL = [
   './',
   './index.html',
