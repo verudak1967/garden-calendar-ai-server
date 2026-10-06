@@ -703,15 +703,41 @@ APK 1.1 (versionCode 2) отправлен на модерацию в RuStore.
 
 ### После прохождения модерации
 
-- [ ] Заполнить карточку: заголовок «AI Ботаник: Сад, Огород,
-      Планировщик», ключевые слова — набор №1 (раздел 13), политика:
+- [ ] Заполнить карточку: заголовок «AI Ботаник: Сад, Огород, Планировщик»,
+      ключевые слова — набор №1 (раздел 13), политика:
       https://garden-calendar-ai-server.onrender.com/privacy
       (зеркало на Render; Cloudflare-хостинг privacy.integroai.ru из РФ
       частично недоступен, apex integroai.ru без A-записи — починить
       в Cloudflare).
-- [ ] Дисциплина версий: следующий APK — минимум versionCode 3
-      (RuStore не примет code 2 повторно).
+- [x] Дисциплина версий: versionCode 3 = версия 2.0 «Модель данных v2»
+      (собрана и установлена 06.10.2026 поверх 1.1 на реальных данных,
+      миграция Room 8->9 прошла; APK: `v3/app-release-2.0.apk`,
+      1.1 сохранён как `v3/app-release.apk`).
 - [ ] Android Studio: открывать рабочую копию
       `Desktop/GardenCalendar/android-app/GardenCalendar`
       (НЕ AndroidStudioProjects — там устаревшая копия); желательно
       `git init` в рабочей копии.
+
+### Android 2.0 — что вошло (перенос модели v2 с PWA)
+
+- Room v9: Location/Tag/PlantTag/Sowing/HarvestLog/Photo/
+  PlantIdentification/SpeciesCatalog; Culture +petName/groupCode/
+  locationId/status/source/createdAt; Task +source (ai/manual/template).
+  Первая SQL-миграция в истории (8->9), fallbackToDestructive удалён;
+  пост-проход DataMigrator (сиды + SpeciesMatcher по названиям).
+- Каталог: 82 вида из PWA (assets/species.json, генератор
+  `pwa/make_species_json.py`), matcher — точный порт findSpecies
+  (JVM-тесты).
+- Фото-first: /api/identify + IdentifyFlowScreen (снимок -> кандидаты
+  с уверенностью -> кличка/локация -> транзакция culture+photo+
+  identification).
+- Сад: поиск (имя/кличка/сорт/латы), группировка по локациям
+  («Не размещено»), точки самочувствия; карточка-питомец: возраст,
+  самочувствие, полив-стрик, достижения; вкладка «История»: посевы,
+  урожай с итогами сезонов, фото-хроника (filesDir/photos, 640px).
+- Архив/возврат/удаление навсегда (раздел в настройках).
+- Полная зачистка эмодзи (0 в коде): векторные иконки — порт
+  pwa/js/icons.js (17 drawables), Phase.emoji удалён, счётчики
+  запросов без иконок-глифов.
+- Прочее: coreLibraryDesugaring (java.time на API 24-25), junit
+  (12 тестов matcher+tamagotchi), versionCode 3 / «2.0».
