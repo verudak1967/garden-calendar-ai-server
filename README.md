@@ -21,7 +21,9 @@ Backend-сервер для Android-приложения **«AI Ботаник»
 - Мониторинг состояния upstream-провайдеров.
 - Админ-панель со статистикой.
 
-**Клиент:** Android-приложение на Kotlin + Jetpack Compose.  
+**Клиент:** Android-приложение на Kotlin + Jetpack Compose,
+текущая версия 1.1 (versionCode 2), отправлена на модерацию
+в RuStore 06.10.2026.  
 **Репозиторий клиента:** [отдельный, приватный]  
 **Публикация:** RuStore, `ru.verudak.gardencalendar`.
 
@@ -69,9 +71,11 @@ Backend-сервер для Android-приложения **«AI Ботаник»
 |---|---|---|
 | `GET` | `/` | Health check. |
 | `GET` | `/app/` | Веб-версия (PWA) «AI Ботаник» — статика из `static/`. |
+| `GET` | `/privacy` | Политика конфиденциальности (зеркало `static/privacy.html`; основной домен частично недоступен из РФ). |
 | `GET` | `/api/usage` | Текущий счётчик лимита для устройства. |
 | `POST` | `/api/ask` | Текстовый AI-запрос. |
 | `POST` | `/api/ask-photo` | Анализ фото растения. |
+| `POST` | `/api/identify` | Определение вида по фото: кандидаты (группа 01–05, speciesKey, confidence) — для photo-first ввода в PWA. |
 | `POST` | `/api/generate-plan` | Генерация годового плана задач. |
 
 ### Админские (требуют `X-Admin-Token`)
@@ -127,11 +131,31 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 PWA-клиент лежит в `static/` и раздаётся на **`/app/`**:
 https://garden-calendar-ai-server.onrender.com/app/
 
-Функционально повторяет Android-версию (культуры, задачи, шаблоны,
-справка AI, анализ фото); данные — в IndexedDB браузера, только
-на устройстве. Обновление: заменить файлы в `static/` → git push.
+Рабочая копия исходников: `Desktop/GardenCalendar/pwa/` (в репо
+копируется при деплое). Функционально повторяет Android-версию и на
+сейчас опережает её: модель данных v2 (группы 01–05, каталог 85 видов,
+локации, теги, посевы/урожаи, фото-дневник, клички растений),
+photo-first ввод через `/api/identify`, самочувствие/стрики/
+достижения (клиентская логика, без AI-запросов). Данные — IndexedDB
+(«ai-botanik», схема v2), только на устройстве.
 
 Служит для тестирования на iPhone (Safari → «На экран “Домой”»).
+
+### Деплой PWA
+
+1. Заменить файлы в `static/` (из рабочей копии `pwa/`).
+2. **Поднять версию кэша в `sw.js`** (`ai-botanik-vNN`; текущая — v21).
+   Без подъёма версии клиенты остаются на старых файлах.
+3. `git push` → Render пересобирается (1–3 мин).
+
+### Иконки
+
+Генератор `GardenCalendar/pwa/icons_gen.py`: одна команда перегенерирует
+PWA-иконки (512/192/180), Android mipmap всех плотностей (webp:
+legacy, round, foreground) и `ic_launcher-playstore.png` 512×512 для
+стора. Утверждён концепт «Подушки»: белая плитка с серой обводкой,
+зелёный росток (большой лист #2E7D32, тёмный #1B5E20); история выбора
+и правки — ROADMAP.md, раздел 17.
 
 Деплой на Render
 Изменения пушатся в main ветку GitHub.
@@ -189,6 +213,7 @@ Render автоматически пересобирает сервис.
 garden-calendar-ai-server/
 ├── main.py              # Основной код сервера (FastAPI)
 ├── requirements.txt     # Python-зависимости
+├── static/              # PWA «AI Ботаник» (index.html, js/, css/, icons/, sw.js, templates.json, privacy.html)
 ├── test.sh              # CLI для тестирования эндпоинтов
 ├── README.md            # Этот файл
 ├── ROADMAP.md           # План развития проекта
@@ -297,7 +322,7 @@ API-ключи хранятся только в переменных окруж�
 Все данные хранятся локально на устройстве пользователя (Room).
 
 Ссылки
-Политика конфиденциальности: https://privacy.integroai.ru
+Политика конфиденциальности: https://garden-calendar-ai-server.onrender.com/privacy (зеркало на Render; privacy.integroai.ru частично недоступен из РФ — Cloudflare)
 
 RuStore: https://www.rustore.ru/catalog/app/ru.verudak.gardencalendar
 
