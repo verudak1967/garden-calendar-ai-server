@@ -72,7 +72,8 @@ RuStore 06.10.2026.
 
 | Метод | Путь | Назначение |
 |---|---|---|
-| `GET` | `/` | Health check. |
+| `GET` | `/` | Сайт проекта (лендинг, `static/site/`). |
+| `GET` | `/health` | Health check (JSON). |
 | `GET` | `/app/` | Веб-версия (PWA) «AI Ботаник» — статика из `static/`. |
 | `GET` | `/privacy` | Политика конфиденциальности (зеркало `static/privacy.html`; основной домен частично недоступен из РФ). |
 | `GET` | `/api/usage` | Текущий счётчик лимита для устройства. |
@@ -167,7 +168,9 @@ Render автоматически пересобирает сервис.
 
 Время сборки: 1–3 минуты.
 
-Проверка: GET / должен вернуть {"status":"ok","service":"ai-botanik"}.
+Проверка: GET /health должен вернуть {"status":"ok","service":"ai-botanik"}.
+Сайт проекта: https://garden-calendar-ai-server.onrender.com/ — лендинг с живыми
+скриншотами PWA (static/site/, снимки — static/site/shots/).
 
 Особенности бесплатного тарифа:
 
