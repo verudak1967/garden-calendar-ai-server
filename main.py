@@ -82,6 +82,7 @@ metrics = {
     "rejected_total": 0,
     "cache_hits": 0,
     "errors_total": 0,
+    "premium_activations": 0,
 }
 
 vision_model_stats: dict = {
@@ -218,6 +219,93 @@ ADMIN_TOKEN = os.getenv("ADMIN_TOKEN")
 if not ADMIN_TOKEN:
     print("WARNING: ADMIN_TOKEN not set — /api/admin/* endpoints disabled")
 
+# === RuStore Public API: серверная валидация подписок (этап 4 монетизации) ===
+RUSTORE_KEY_ID = os.getenv("RUSTORE_KEY_ID")
+RUSTORE_PRIVATE_KEY_B64 = os.getenv("RUSTORE_PRIVATE_KEY")
+RUSTORE_PACKAGE_NAME = os.getenv("RUSTORE_PACKAGE_NAME", "ru.verudak.gardencalendar")
+# домен мигрирует на российские сертификаты — держим фолбэк
+RUSTORE_API_HOSTS = [
+    "https://public-api.rustore.ru",
+    "https://public-api-m.rustore.ru",
+]
+if not (RUSTORE_KEY_ID and RUSTORE_PRIVATE_KEY_B64):
+    print("WARNING: RUSTORE_KEY_ID / RUSTORE_PRIVATE_KEY not set — "
+          "/api/subscription/* disabled")
+
+_jwe_cache = {"token": None, "expires_at": 0.0}
+
+
+def _rustore_jwe_token() -> str:
+    """JWE-токен Public API: SHA512withRSA по keyId+timestamp, кэш на TTL."""
+    import base64
+    from Crypto.PublicKey import RSA
+    from Crypto.Signature import pkcs1_15
+    from Crypto.Hash import SHA512
+
+    now = time.time()
+    if _jwe_cache["token"] and now < _jwe_cache["expires_at"] - 30:
+        return _jwe_cache["token"]
+
+    timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+    message = (RUSTORE_KEY_ID + timestamp).encode()
+    private_key = RSA.import_key(base64.b64decode(RUSTORE_PRIVATE_KEY_B64))
+    signature = base64.b64encode(
+        pkcs1_15.new(private_key).sign(SHA512.new(message))
+    ).decode()
+
+    last_err = None
+    for host in RUSTORE_API_HOSTS:
+        try:
+            resp = httpx.post(
+                f"{host}/public/auth",
+                json={"keyId": RUSTORE_KEY_ID, "timestamp": timestamp,
+                      "signature": signature},
+                timeout=15.0,
+            )
+            data = resp.json()
+            if resp.status_code == 200 and data.get("code") == "OK":
+                jwe = data["body"]["jwe"]
+                ttl = int(data["body"].get("ttl", 900))
+                _jwe_cache["token"] = jwe
+                _jwe_cache["expires_at"] = now + ttl
+                return jwe
+            last_err = f"{host}: {data.get('code')}/{data.get('message')}"
+        except Exception as e:
+            last_err = f"{host}: {e}"
+    raise HTTPException(status_code=502,
+                        detail=f"RuStore auth недоступен ({last_err})")
+
+
+async def rustore_check_subscription(purchase_id: str, product_id: str) -> dict:
+    """Валидация подписки через /public/v5/subscription.
+    Возвращает body при активной подписке, иначе raise 400."""
+    token = _rustore_jwe_token()
+    last_err = None
+    for host in RUSTORE_API_HOSTS:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{host}/public/v5/subscription/"
+                    f"{RUSTORE_PACKAGE_NAME}/{product_id}/{purchase_id}",
+                    headers={"Public-Token": token},
+                )
+            if resp.status_code == 200:
+                body = resp.json().get("body") or {}
+                expiry_ms = int(body.get("expiryTimeMillis", "0") or 0)
+                payment_state = int(body.get("paymentState", 0) or 0)
+                if expiry_ms / 1000.0 <= time.time():
+                    raise HTTPException(400, "Срок подписки истёк")
+                if payment_state not in (1, 2):  # 1 = оплачено, 2 = триал
+                    raise HTTPException(400, "Подписка не оплачена")
+                return body
+            last_err = f"{host}: HTTP {resp.status_code}"
+        except HTTPException:
+            raise
+        except Exception as e:
+            last_err = f"{host}: {e}"
+    raise HTTPException(status_code=502,
+                        detail=f"RuStore API недоступен ({last_err})")
+
 
 def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
     if not ADMIN_TOKEN:
@@ -262,6 +350,13 @@ class AiResponse(BaseModel):
 class UsageResponse(BaseModel):
     used: int
     limit: int
+    premium: bool = False
+
+
+class SubscriptionActivateRequest(BaseModel):
+    device_id: Optional[str] = "unknown"
+    purchase_id: str
+    product_id: str
 
 
 class PlanRequest(BaseModel):
@@ -427,7 +522,28 @@ def rule_filter(query: str) -> tuple[str, str]:
 # ========== ЛИМИТЫ ==========
 
 daily_usage: dict = defaultdict(lambda: {"local_date": None, "count": 0})
-FREE_DAILY_LIMIT = 10
+FREE_DAILY_LIMIT = 7        # бесплатный лимит (было 10; решение по монетизации 2026-10-11)
+PREMIUM_DAILY_LIMIT = 100   # fair-use «безлимита» подписки
+
+# Состояния подписок: device_id -> {"until": ISO, "product_id", "purchase_id"}.
+# В памяти (как и счётчики): после рестарта клиент переподтвердит при запуске.
+premium_state: dict = {}
+PREMIUM_REFRESH_MARGIN_H = 12  # за 12 ч до истечения считаем переподтверждение нужным
+
+
+def is_premium(device_id: str) -> bool:
+    rec = premium_state.get(device_id)
+    if not rec:
+        return False
+    try:
+        until = datetime.fromisoformat(rec["until"])
+    except Exception:
+        return False
+    return datetime.now(timezone.utc) + timedelta(hours=PREMIUM_REFRESH_MARGIN_H) < until
+
+
+def daily_limit_for(device_id: str) -> int:
+    return PREMIUM_DAILY_LIMIT if is_premium(device_id) else FREE_DAILY_LIMIT
 
 
 def _local_date_for_offset(offset_minutes: int) -> str:
@@ -444,7 +560,7 @@ def get_daily_usage(device_id: str, tz_offset_minutes: int = 0) -> tuple[int, in
     if rec["local_date"] != today_local:
         rec["local_date"] = today_local
         rec["count"] = 0
-    return rec["count"], FREE_DAILY_LIMIT
+    return rec["count"], daily_limit_for(device_id)
 
 
 def increment_daily_usage(device_id: str, tz_offset_minutes: int = 0) -> tuple[int, int]:
@@ -1205,7 +1321,37 @@ def get_usage(
     timezone_offset_minutes: int = 0,
 ):
     used, limit = get_daily_usage(device_id, timezone_offset_minutes)
-    return UsageResponse(used=used, limit=limit)
+    return UsageResponse(used=used, limit=limit, premium=is_premium(device_id))
+
+
+@app.post("/api/subscription/activate")
+async def subscription_activate(req: SubscriptionActivateRequest):
+    """Подтверждение покупки подписки: валидация в RuStore -> снятие лимита
+    для device_id. Сервер — единственный источник истины по лимитам."""
+    if not (RUSTORE_KEY_ID and RUSTORE_PRIVATE_KEY_B64):
+        raise HTTPException(status_code=503,
+                            detail="Подписки временно недоступны")
+    if not req.device_id or req.device_id == "unknown":
+        raise HTTPException(status_code=400, detail="Не передан device_id")
+
+    body = await rustore_check_subscription(req.purchase_id, req.product_id)
+    until = datetime.fromtimestamp(
+        int(body["expiryTimeMillis"]) / 1000.0, tz=timezone.utc
+    )
+    premium_state[req.device_id] = {
+        "until": until.isoformat(),
+        "product_id": req.product_id,
+        "purchase_id": req.purchase_id,
+    }
+    metrics["premium_activations"] += 1
+    used, limit = get_daily_usage(req.device_id, 0)
+    return {
+        "premium": True,
+        "until": until.isoformat(),
+        "product_id": req.product_id,
+        "used": used,
+        "limit": daily_limit_for(req.device_id),
+    }
 
 
 @app.post("/api/ask", response_model=AiResponse)
@@ -1474,6 +1620,9 @@ def admin_stats(_: None = None, x_admin_token: Optional[str] = Header(None)):
         "server_started_at": datetime.fromtimestamp(SERVER_STARTED_AT, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
         "counters": dict(metrics),
         "active_devices_24h": len([d for d, r in daily_usage.items() if r.get("count", 0) > 0]),
+        "premium_devices": len([d for d, r in premium_state.items()
+                                if is_premium(d)]),
+        "premium_states": {d: r["until"] for d, r in premium_state.items()},
         "upstreams": dict(upstream_health),
         "vision_models": model_stats_list,
         "recent_errors": list(error_log)[::-1],
