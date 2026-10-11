@@ -1740,3 +1740,14 @@ def privacy_mirror():
             body = f.read()
         return Response(content=body, media_type="text/html; charset=utf-8")
     raise HTTPException(status_code=404, detail="privacy.html not found")
+
+
+# Оферта подписки «AI Ботаник+»
+@app.get("/offer", include_in_schema=False)
+def offer_page():
+    path = os.path.join(_STATIC_DIR, "offer.html")
+    if os.path.isfile(path):
+        with open(path, "rb") as f:
+            body = f.read()
+        return Response(content=body, media_type="text/html; charset=utf-8")
+    raise HTTPException(status_code=404, detail="offer.html not found")

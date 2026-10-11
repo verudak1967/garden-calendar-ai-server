@@ -1299,7 +1299,7 @@ async function screenSettings() {
       <h2>О приложении</h2>
       <p class="muted small">Веб-версия «AI Ботаник» для тестирования. Android-версия — в RuStore.</p>
       <p class="small"><a href="https://garden-calendar-ai-server.onrender.com/privacy" target="_blank" rel="noopener">Политика конфиденциальности</a></p>
-      <p class="muted small">Бесплатный лимит: 10 AI-запросов в день на устройство. Повторные запросы из кэша не расходуются.</p>
+      <p class="muted small">Бесплатный лимит: 7 AI-запросов в день на устройство. Повторные запросы из кэша не расходуются.</p>
     </div>`;
 }
 
