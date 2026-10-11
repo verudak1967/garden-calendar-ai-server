@@ -1310,7 +1310,7 @@ def build_plan_prompt() -> str:
 
 # ========== ЭНДПОИНТЫ ==========
 
-@app.get("/")
+@app.get("/health")
 def health():
     return {"status": "ok", "service": "ai-botanik"}
 
@@ -1730,6 +1730,7 @@ if os.path.isdir(_STATIC_DIR):
     print(f"PWA static mounted at /app/ from {_STATIC_DIR}")
 
 
+
 # Зеркало политики конфиденциальности на том же сервере —
 # запасной адрес, не зависящий от внешнего хостинга домена.
 @app.get("/privacy", include_in_schema=False)
@@ -1751,3 +1752,11 @@ def offer_page():
             body = f.read()
         return Response(content=body, media_type="text/html; charset=utf-8")
     raise HTTPException(status_code=404, detail="offer.html not found")
+
+# Сайт проекта (лендинг) в корне "/". Строго ПОСЛЕДНИМ: Starlette матчит
+# маршруты по порядку регистрации, и все @app.* выше (/api, /app, /privacy,
+# /offer, /health) должны выигрывать у корневой статики.
+_SITE_DIR = os.path.join(_STATIC_DIR, "site")
+if os.path.isdir(_SITE_DIR):
+    app.mount("/", StaticFiles(directory=_SITE_DIR, html=True), name="site")
+    print(f"Site mounted at / from {_SITE_DIR}")

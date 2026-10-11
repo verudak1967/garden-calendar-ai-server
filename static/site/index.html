@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Ботаник — умный календарь сада и AI-агроном</title>
+<meta name="description" content="Сфотографируйте растение — AI определит вид, составит план ухода на сезон и будет следить за поливом. Веб-версия работает без установки, есть приложение для Android (RuStore).">
+<link rel="icon" href="/app/icons/icon-192.png">
+<meta property="og:title" content="AI Ботаник — умный календарь сада">
+<meta property="og:description" content="Фото → определение вида → план ухода → напоминания. Работает в браузере.">
+<meta property="og:image" content="/app/icons/icon-512.png">
+<style>
+:root{
+  --bg:#FAF7F0; --paper:#FFFFFF; --ink:#22301F; --muted:#6E7A67;
+  --green:#2E7D32; --green-deep:#1B4D2A; --green-soft:#E7F1E4; --green-line:#D4E3CE;
+  --accent:#D9622B; --accent-soft:#FBEAE0; --line:#E9E2D2;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--ink);
+  font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
+h1,h2,h3,.serif{font-family:Georgia,"Times New Roman",serif;font-weight:600;line-height:1.2}
+a{color:var(--green);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1060px;margin:0 auto;padding:0 20px}
+header{position:sticky;top:0;z-index:10;background:rgba(250,247,240,.92);
+  backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+.hrow{display:flex;align-items:center;gap:14px;padding:12px 0}
+.logo{display:flex;align-items:center;gap:10px;font-family:Georgia,serif;
+  font-size:20px;color:var(--green-deep);font-weight:600}
+.logo svg{width:26px;height:26px}
+nav{margin-left:auto;display:flex;gap:10px;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:8px;border-radius:12px;
+  padding:11px 20px;font-size:15px;font-weight:600;border:1.5px solid transparent;
+  cursor:pointer;transition:.15s;text-decoration:none!important}
+.btn-green{background:var(--green);color:#fff}
+.btn-green:hover{background:var(--green-deep)}
+.btn-accent{background:var(--accent);color:#fff}
+.btn-accent:hover{background:#BE5220}
+.btn-ghost{border-color:var(--green-line);color:var(--green-deep);background:transparent}
+.btn-ghost:hover{background:var(--green-soft)}
+.btn svg{width:18px;height:18px}
+/* HERO */
+.hero{padding:64px 0 40px;background:
+  radial-gradient(600px 300px at 85% -40px, var(--green-soft), transparent),
+  radial-gradient(500px 260px at 0% 110%, var(--accent-soft), transparent)}
+.hero .tag{display:inline-block;background:var(--green-soft);color:var(--green-deep);
+  border:1px solid var(--green-line);border-radius:999px;padding:5px 14px;
+  font-size:13.5px;margin-bottom:18px}
+.hero h1{font-size:clamp(32px,5vw,52px);max-width:820px}
+.hero h1 em{font-style:normal;color:var(--green)}
+.hero p.lead{margin:20px 0 26px;font-size:clamp(17px,2vw,19.5px);
+  color:var(--muted);max-width:640px}
+.hero .cta{display:flex;gap:12px;flex-wrap:wrap}
+.hero .note{margin-top:14px;font-size:14px;color:var(--muted)}
+.metrics{display:flex;gap:0;margin-top:44px;border:1px solid var(--green-line);
+  border-radius:16px;background:var(--paper);overflow:hidden;flex-wrap:wrap}
+.metrics div{flex:1 1 150px;padding:18px 22px;border-right:1px solid var(--green-line)}
+.metrics div:last-child{border-right:none}
+.metrics b{display:block;font-size:26px;font-family:Georgia,serif;color:var(--green-deep)}
+.metrics span{font-size:13.5px;color:var(--muted)}
+/* SECTIONS */
+section{padding:64px 0}
+.kicker{color:var(--accent);font-size:13.5px;font-weight:700;
+  letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}
+h2{font-size:clamp(26px,3.4vw,36px);margin-bottom:14px}
+.sub{color:var(--muted);max-width:620px;margin-bottom:30px}
+/* versus */
+.versus{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+@media(max-width:720px){.versus{grid-template-columns:1fr}}
+.vcard{border-radius:18px;padding:26px;border:1px solid var(--line);background:var(--paper)}
+.vcard.bad{background:#F6F1E7}
+.vcard.good{background:var(--green-soft);border-color:var(--green-line)}
+.vcard h3{font-size:20px;margin-bottom:10px}
+.vcard.bad h3{color:#8A6A3A}
+.vcard.good h3{color:var(--green-deep)}
+.vcard p{color:var(--muted);font-size:15px}
+/* steps */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;counter-reset:st}
+@media(max-width:720px){.steps{grid-template-columns:1fr}}
+.step{background:var(--paper);border:1px solid var(--line);border-radius:18px;padding:26px;position:relative}
+.step:before{counter-increment:st;content:counter(st);position:absolute;top:-16px;left:22px;
+  width:34px;height:34px;border-radius:50%;background:var(--green);color:#fff;
+  display:flex;align-items:center;justify-content:center;font-family:Georgia,serif;font-size:17px}
+.step h3{font-size:19px;margin:10px 0 8px}
+.step p{color:var(--muted);font-size:15px}
+.step .pic{color:var(--green);margin-bottom:6px}
+.step .pic svg{width:30px;height:30px}
+/* shots */
+.shots{display:grid;grid-template-columns:repeat(2,1fr);gap:26px;align-items:start}
+@media(max-width:720px){.shots{grid-template-columns:1fr}}
+.shot{text-align:center}
+.phone{display:inline-block;background:var(--ink);border-radius:26px;padding:10px;
+  box-shadow:0 18px 44px rgba(34,48,31,.18)}
+.phone img{display:block;width:100%;max-width:300px;border-radius:18px}
+.shot figcaption{margin-top:14px;color:var(--muted);font-size:14.5px;max-width:340px;
+  margin-left:auto;margin-right:auto}
+/* feature cards */
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+@media(max-width:960px){.grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:540px){.grid{grid-template-columns:1fr}}
+.f{background:var(--paper);border:1px solid var(--line);border-radius:16px;padding:20px}
+.f svg{width:26px;height:26px;color:var(--green);margin-bottom:10px}
+.f h3{font-size:16.5px;margin-bottom:6px}
+.f p{font-size:14px;color:var(--muted)}
+/* pet */
+.pet{display:grid;grid-template-columns:1.1fr .9fr;gap:36px;align-items:center;
+  background:var(--green-deep);border-radius:24px;padding:44px;color:#EDF5EA}
+@media(max-width:720px){.pet{grid-template-columns:1fr;padding:28px}}
+.pet .kicker{color:#A5D6A7}
+.pet h2{color:#fff}
+.pet p{color:#C9DCc4}
+.pet ul{list-style:none;margin-top:18px}
+.pet li{padding:7px 0 7px 30px;position:relative;color:#DCEAD8;font-size:15.5px}
+.pet li:before{content:"";position:absolute;left:0;top:12px;width:16px;height:16px;
+  border-radius:50%;background:#4CAF50;border:3px solid #2E7D32}
+/* pricing */
+.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;align-items:stretch}
+@media(max-width:720px){.plans{grid-template-columns:1fr}}
+.plan{background:var(--paper);border:1.5px solid var(--line);border-radius:20px;padding:28px}
+.plan.hl{border-color:var(--green);background:var(--green-soft);position:relative}
+.plan.hl .mark{position:absolute;top:-13px;left:24px;background:var(--green);color:#fff;
+  border-radius:999px;font-size:12.5px;font-weight:700;padding:4px 12px}
+.plan h3{font-size:19px;margin-bottom:6px}
+.plan .price{font-family:Georgia,serif;font-size:34px;color:var(--green-deep);margin:10px 0 2px}
+.plan .per{color:var(--muted);font-size:13.5px;margin-bottom:14px}
+.plan ul{list-style:none}
+.plan li{font-size:14.5px;color:var(--muted);padding:5px 0 5px 24px;position:relative}
+.plan li:before{content:"✓";position:absolute;left:2px;color:var(--green);font-weight:700}
+/* faq */
+.faq details{background:var(--paper);border:1px solid var(--line);border-radius:14px;
+  padding:16px 20px;margin-bottom:10px}
+.faq summary{cursor:pointer;font-weight:600;font-size:16px;list-style:none;
+  display:flex;justify-content:space-between;gap:12px}
+.faq summary::-webkit-details-marker{display:none}
+.faq summary:after{content:"+";color:var(--accent);font-size:20px;line-height:1}
+.faq details[open] summary:after{content:"–"}
+.faq details p{margin-top:10px;color:var(--muted);font-size:15px}
+/* privacy ticks */
+.ticks{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(max-width:720px){.ticks{grid-template-columns:1fr}}
+.ticks div{background:var(--paper);border:1px solid var(--line);border-radius:14px;
+  padding:16px 18px;font-size:15px;color:var(--muted)}
+.ticks b{color:var(--ink)}
+.ticks span{color:var(--green);font-weight:700;margin-right:8px}
+/* final */
+.final{background:linear-gradient(135deg,var(--green-soft),var(--accent-soft));
+  border-radius:24px;padding:52px 40px;text-align:center}
+.final h2{margin-bottom:10px}
+.final p{color:var(--muted);margin-bottom:24px}
+footer{border-top:1px solid var(--line);padding:34px 0 60px;color:var(--muted);font-size:14px}
+.frow{display:flex;gap:24px;flex-wrap:wrap;align-items:center}
+.frow nav{display:flex;gap:18px;flex-wrap:wrap}
+.frow nav a{color:var(--muted)}
+.frow nav a:hover{color:var(--green)}
+.copy{margin-top:14px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap hrow">
+    <span class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#2E7D32" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21v-8"/><path d="M12 13C12 8.5 9 6 4.5 6c0 4.5 3 7 7.5 7z"/><path d="M12 11c0-3.6 2.6-5.5 7.5-5.5 0 3.9-2.6 5.5-7.5 5.5z"/></svg>
+      AI Ботаник
+    </span>
+    <nav>
+      <a class="btn btn-ghost" href="/app/">Веб-версия</a>
+      <a class="btn btn-green" href="https://www.rustore.ru/catalog/app/ru.verudak.gardencalendar" target="_blank" rel="noopener">Скачать в RuStore</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap">
+    <span class="tag">сад · огород · комнатные</span>
+    <h1>Сад, который сам<br>о себе <em>напоминает</em></h1>
+    <p class="lead">Сфотографируйте растение — AI определит вид, составит план ухода
+      на сезон и будет следить за поливами. Всё остальное — удовольствие от сада.</p>
+    <div class="cta">
+      <a class="btn btn-accent" href="/app/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 8.5h3l1.8-2.8h5.4l1.8 2.8h3a1.2 1.2 0 0 1 1.2 1.2v9a1.2 1.2 0 0 1-1.2 1.2h-15a1.2 1.2 0 0 1-1.2-1.2v-9a1.2 1.2 0 0 1 1.2-1.2z"/><circle cx="12" cy="14" r="3.6"/></svg>
+        Открыть веб-версию
+      </a>
+      <a class="btn btn-ghost" href="#how">Как это работает</a>
+    </div>
+    <p class="note">Работает в браузере — без установки и регистрации. Данные хранятся только у вас.</p>
+    <div class="metrics">
+      <div><b>82</b><span>вида в каталоге растений</span></div>
+      <div><b>18</b><span>готовых планов по культурам</span></div>
+      <div><b>5</b><span>групп: от плодовых до комнатных</span></div>
+      <div><b>RuStore</b><span>приложение для Android</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="vs">
+  <div class="wrap">
+    <p class="kicker">Ожидание и реальность</p>
+    <h2>Обычно план сада живёт неделю</h2>
+    <div class="versus" style="margin-top:26px">
+      <div class="vcard bad">
+        <h3>Блокнот и память</h3>
+        <p>Записали посевы в январе, забыли подкормить в мае, вспомнили о фитофторозе
+          в августе — когда уже поздно. Что это за сорт? Когда сажали? Никто не помнит.</p>
+      </div>
+      <div class="vcard good">
+        <h3>AI Ботаник</h3>
+        <p>Сфотографировали рассаду — растение появилось в саду с планом на весь сезон.
+          Просрочили полив — карточка «покраснела». Сорвали первый урожай — он попал
+          в историю сезона. Ничего запоминать не нужно.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="how" style="padding-top:24px">
+  <div class="wrap">
+    <p class="kicker">Как это работает</p>
+    <h2>Три шага — и сад ведётся сам</h2>
+    <p class="sub">Никаких сложных настроек: приложение заточено под дачника,
+      которому некогда разбираться с программами.</p>
+    <div class="steps">
+      <div class="step">
+        <div class="pic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 8.5h3l1.8-2.8h5.4l1.8 2.8h3a1.2 1.2 0 0 1 1.2 1.2v9a1.2 1.2 0 0 1-1.2 1.2h-15a1.2 1.2 0 0 1-1.2-1.2v-9a1.2 1.2 0 0 1 1.2-1.2z"/><circle cx="12" cy="14" r="3.6"/></svg></div>
+        <h3>Сфотографируйте растение</h3>
+        <p>Рассаду на подоконнике, куст в теплице или капризный фикус. Можно выбрать
+          снимок из галереи.</p>
+      </div>
+      <div class="step">
+        <div class="pic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.5 11.5c0 4.1-3.8 7.3-8.5 7.3-1 0-2-.15-2.9-.42L4.5 20l1.2-3.4C4.1 15.2 3.5 13.4 3.5 11.5c0-4.1 3.8-7.3 8.5-7.3s8.5 3.2 8.5 7.3z"/></svg></div>
+        <h3>AI определит и составит план</h3>
+        <p>Вид, группа, план ухода на сезон: посевы, подкормки, поливы, обрезка —
+          с датами, сдвинутыми под вашу климатическую зону.</p>
+      </div>
+      <div class="step">
+        <div class="pic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5.5h10a3 3 0 0 1 3 3v9a3 3 0 0 1-3 3h-10a3 3 0 0 1-3-3v-9a3 3 0 0 1 3-3z"/><path d="M8 3v4.5M16 3v4.5M4 10.5h16"/></svg></div>
+        <h3>Выполняйте — остальное контролируется</h3>
+        <p>Задачи в календаре, поливы под контролем, урожай в истории.
+          Пропустили — приложение честно покажет.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="look" style="padding-top:10px">
+  <div class="wrap">
+    <p class="kicker">Посмотрите</p>
+    <h2>Живые экраны приложения</h2>
+    <p class="sub">Это настоящие снимки веб-версии — той самой, что откроется
+      по кнопке выше.</p>
+    <div class="shots">
+      <figure class="shot">
+        <span class="phone"><img src="shots/garden.png" alt="Экран сада: растения сгруппированы по местам"></span>
+        <figcaption>Сад сгруппирован по местам: теплица, дом, открытый грунт.
+          Точка справа — самочувствие по поливам.</figcaption>
+      </figure>
+      <figure class="shot">
+        <span class="phone"><img src="shots/pet.png" alt="Карточка растения: кличка, возраст, задачи"></span>
+        <figcaption>Карточка растения: кличка, возраст «с нами», статус полива
+          и план задач на сезон.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <div class="pet">
+      <div>
+        <p class="kicker">Растение-питомец</p>
+        <h2>Каждое растение — с характером</h2>
+        <p>Дайте кличку — и карточка оживает: сколько дней растение с вами,
+          как оно себя чувствует, не пора ли полить.</p>
+        <ul>
+          <li>Возраст: «с нами 213 дней»</li>
+          <li>Самочувствие по поливам: зелёное, жёлтое, красное</li>
+          <li>Полив без пропусков — серии и достижения</li>
+          <li>История: посевы, урожай по сезонам, фото-хроника</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="more" style="padding-top:24px">
+  <div class="wrap">
+    <p class="kicker">Что ещё умеет</p>
+    <h2>Мелочи, из которых складывается уют</h2>
+    <div class="grid">
+      <div class="f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg><h3>Поиск по кличкам</h3><p>Ищите по названию, кличке, сорту и даже латыни.</p></div>
+      <div class="f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 19.5l.9-3.6L16.6 4.7a2.05 2.05 0 0 1 2.9 2.9L8.3 18.9l-3.8.6z"/></svg><h3>Заметки о саде</h3><p>Дневник по каждому растению и общие заметки — с редактированием.</p></div>
+      <div class="f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16v13H4z"/><path d="M8 13l3-3 3 3 4-4"/></svg><h3>Урожай по сезонам</h3><p>Считает килограммы и штуки, подводит итог каждого сезона.</p></div>
+      <div class="f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.8 11h10.4l-1.3 8.7a2 2 0 0 1-2 1.7h-3.8a2 2 0 0 1-2-1.7L6.8 11z"/><path d="M4.5 11h15"/></svg><h3>Фото-хроника</h3><p>Добавляйте снимки — увидите, как растение менялось месяц за месяцем.</p></div>
+      <div class="f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.5" r="5"/><path d="M9 12.6 7.2 21l4.8-2.4L16.8 21 15 12.6"/></svg><h3>Достижения</h3><p>«30 дней вместе», «Первый урожай» — приятные вехи без казино.</p></div>
+      <div class="f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5A2.5 2.5 0 0 1 7.5 2H19v17.5H7.5A2.5 2.5 0 0 0 5 22z"/></svg><h3>Справочник агронома</h3><p>Спросите что угодно: препараты, дозировки, вредители — с фото или без.</p></div>
+      <div class="f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5.5v13M5.5 12h13"/></svg><h3>Кэш — бесплатно</h3><p>Повторные вопросы по той же культуре не расходуют дневной лимит.</p></div>
+      <div class="f"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.8 11h10.4l-1.3 8.7a2 2 0 0 1-2 1.7h-3.8a2 2 0 0 1-2-1.7L6.8 11z"/><path d="M12 11V6.6"/><path d="M12 8.4c0-2 1.4-3.3 3.5-3.3 0 2-1.4 3.3-3.5 3.3z"/></svg><h3>Комнатные — тоже сад</h3><p>Пересадка, грунт, свет — отдельные рекомендации для домашних любимцев.</p></div>
+    </div>
+    <div class="shots" style="margin-top:34px">
+      <figure class="shot">
+        <span class="phone"><img src="shots/calendar.png" alt="Календарь задач сада"></span>
+        <figcaption>Календарь: задачи всех растений по дням, статусы под контролем.</figcaption>
+      </figure>
+      <figure class="shot">
+        <span class="phone"><img src="shots/ai.png" alt="Справка AI-агронома"></span>
+        <figcaption>Справка AI: вопрос текстом или с фотографией, история запросов.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="price" style="background:var(--paper);border-block:1px solid var(--line)">
+  <div class="wrap">
+    <p class="kicker">Тарифы</p>
+    <h2>Честный freemium</h2>
+    <p class="sub">Все функции сада бесплатны навсегда. Лимит касается только
+      обращений к AI — и вот тут у подписки есть смысл.</p>
+    <div class="plans">
+      <div class="plan">
+        <h3>Бесплатно</h3>
+        <div class="price">0 ₽</div>
+        <div class="per">навсегда</div>
+        <ul>
+          <li>Неограниченно растений и задач</li>
+          <li>7 AI-запросов в день</li>
+          <li>История, фото-хроника, достижения</li>
+        </ul>
+      </div>
+      <div class="plan hl">
+        <span class="mark">7 дней бесплатно</span>
+        <h3>Ботаник+ на месяц</h3>
+        <div class="price">299 ₽</div>
+        <div class="per">в месяц, автопродление</div>
+        <ul>
+          <li>До 100 AI-запросов в день</li>
+          <li>Справка, фото-анализ, планы — без оглядки на лимит</li>
+          <li>Приоритетный доступ к новым функциям</li>
+        </ul>
+      </div>
+      <div class="plan">
+        <h3>Ботаник+ на год</h3>
+        <div class="price">1 990 ₽</div>
+        <div class="per">в год — выгода 44%</div>
+        <ul>
+          <li>Всё из месячного тарифа</li>
+          <li>166 ₽ в месяц — дешевле рассады</li>
+          <li>Отмена в любой момент</li>
+        </ul>
+      </div>
+    </div>
+    <p class="sub" style="margin-top:18px;font-size:14px">Оплата через RuStore. Пробный период — 7 дней,
+      списание после его окончания; отменить можно до списания в RuStore → Профиль → Подписки.
+      <a href="/offer">Условия подписки</a>.</p>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap">
+    <p class="kicker">Вопросы</p>
+    <h2>Часто спрашивают</h2>
+    <div class="faq" style="margin-top:26px">
+      <details><summary>Куда попадают мои данные?</summary><p>Список растений, задачи, заметки и фото хранятся только на вашем устройстве. На сервер уходят лишь текст запроса и сжатая фотография — в момент обращения к AI, и не сохраняются там.</p></details>
+      <details><summary>Чем веб-версия отличается от приложения?</summary><p>Функционально — одинаково. Приложение для Android живёт в RuStore и ставится как обычное; веб-версия открывается по ссылке в любом браузере, включая iPhone — можно добавить на экран «Домой» и пользоваться как приложением.</p></details>
+      <details><summary>Что если я не разбираюсь в растениях?</summary><p>Это и задумано: фотографируете — остальное делает AI. Определит вид, подберёт группу, составит план с датами. Ошибся — поправите в два тапа.</p></details>
+      <details><summary>AI ошибается?</summary><p>Иногда. Уверенность показывается в процентах у каждого кандидата, а группу всегда можно исправить. Ответы агронома — справочные: для точной диагностики лучше приложить фото крупным планом.</p></details>
+      <details><summary>Что входит в бесплатную версию?</summary><p>Всё про сад: растения, календарь, шаблоны планов, история, заметки, достижения. Лимит 7 AI-запросов в день — этого хватает на пару консультаций ежедневно.</p></details>
+      <details><summary>Как отменить подписку?</summary><p>RuStore → Профиль → Подписки → отменить автопродление. Доступ сохранится до конца оплаченного периода, деньги за текущий период не списываются повторно.</p></details>
+      <details><summary>Нет RuStore — можно без него?</summary><p>Да: веб-версия полностью самостоятельна. Подписка пока оформляется в приложении Android через RuStore.</p></details>
+      <details><summary>Кто делает AI Ботаника?</summary><p>Разработчик-садовод Рудак Владимир. Пишите: <a href="mailto:navi-com@yandex.ru">navi-com@yandex.ru</a> — читаю всё.</p></details>
+    </div>
+  </div>
+</section>
+
+<section id="privacy" style="padding-top:10px">
+  <div class="wrap">
+    <p class="kicker">Приватность</p>
+    <h2>Ваш сад видите только вы</h2>
+    <div class="ticks" style="margin-top:24px">
+      <div><span>✓</span><b>Данные — на устройстве.</b> Растения, задачи, фото не покидают телефон.</div>
+      <div><span>✓</span><b>Без рекламы и аналитики.</b> Ни одного трекера — проверяется просто.</div>
+      <div><span>✓</span><b>Анонимный device_id.</b> Только для дневного лимита, без личности.</div>
+      <div><span>✓</span><b>Открытая политика.</b> Что и куда передаётся — <a href="/privacy">по-русски и подробно</a>.</div>
+    </div>
+  </div>
+</section>
+
+<section style="padding-top:10px">
+  <div class="wrap">
+    <div class="final">
+      <h2>Ваш сад уже ждёт</h2>
+      <p>Откройте веб-версию и добавьте первое растение — займёт минуту.</p>
+      <a class="btn btn-accent" href="/app/">Открыть веб-версию</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="frow">
+      <span class="logo" style="font-size:17px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#2E7D32" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="width:20px;height:20px"><path d="M12 21v-8"/><path d="M12 13C12 8.5 9 6 4.5 6c0 4.5 3 7 7.5 7z"/><path d="M12 11c0-3.6 2.6-5.5 7.5-5.5 0 3.9-2.6 5.5-7.5 5.5z"/></svg>
+        AI Ботаник
+      </span>
+      <nav>
+        <a href="/app/">Веб-версия</a>
+        <a href="https://www.rustore.ru/catalog/app/ru.verudak.gardencalendar" target="_blank" rel="noopener">RuStore</a>
+        <a href="/offer">Условия подписки</a>
+        <a href="/privacy">Политика конфиденциальности</a>
+        <a href="mailto:navi-com@yandex.ru">Поддержка</a>
+      </nav>
+    </div>
+    <p class="copy">© 2026 Рудак Владимир · Сделано с любовью к саду</p>
+  </div>
+</footer>
+
+</body>
+</html>
