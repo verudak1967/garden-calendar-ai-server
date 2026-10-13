@@ -303,50 +303,73 @@ def _rustore_jwe_token() -> str:
                         detail=f"RuStore auth недоступен ({last_err})")
 
 
-async def rustore_check_subscription(purchase_id: str, product_id: str) -> dict:
-    """Валидация подписки через /public/v5/subscription.
-    Возвращает body при активной подписке, иначе raise 400."""
+async def _rustore_subscription_query(purchase_id: str, product_id: str,
+                                      sandbox: bool) -> tuple[int, dict]:
+    """Один запрос к v5 (sandbox=True -> /public/sandbox/v5).
+    Возвращает (http_status, json|{})."""
     token = _rustore_jwe_token()
+    prefix = "/public/sandbox/v5/subscription/" if sandbox \
+        else "/public/v5/subscription/"
     last_err = None
     for host in RUSTORE_API_HOSTS:
         try:
             async with httpx.AsyncClient(timeout=15.0,
                                          verify=_RUSTORE_SSL) as client:
                 resp = await client.get(
-                    f"{host}/public/v5/subscription/"
+                    f"{host}{prefix}"
                     f"{RUSTORE_PACKAGE_NAME}/{product_id}/{purchase_id}",
                     headers={"Public-Token": token},
                 )
-            if resp.status_code == 200:
-                body = resp.json().get("body") or {}
-                expiry_ms = int(body.get("expiryTimeMillis", "0") or 0)
-                payment_state = int(body.get("paymentState", 0) or 0)
-                if expiry_ms / 1000.0 <= time.time():
-                    raise HTTPException(400, "Срок подписки истёк")
-                if payment_state not in (1, 2):  # 1 = оплачено, 2 = триал
-                    raise HTTPException(400, "Подписка не оплачена")
-                return body
-            if 400 <= resp.status_code < 500:
-                # RuStore ответил по существу (нет такой покупки, плохой
-                # токен и т.п.) — это не сбой хоста, фолбэк не нужен.
-                try:
-                    data = resp.json()
-                    code = str(data.get("code") or resp.status_code)
-                except Exception:
-                    code = str(resp.status_code)
-                if resp.status_code == 404 or "NOT_FOUND" in code.upper():
-                    raise HTTPException(
-                        400, "Покупка не найдена в RuStore — проверьте "
-                             "аккаунт или восстановите покупки")
-                raise HTTPException(
-                    400, f"RuStore отклонил запрос ({code})")
-            last_err = f"{host}: HTTP {resp.status_code}"
+            try:
+                data = resp.json()
+            except Exception:
+                data = {}
+            return resp.status_code, data
         except HTTPException:
             raise
         except Exception as e:
             last_err = f"{host}: {e}"
     raise HTTPException(status_code=502,
                         detail=f"RuStore API недоступен ({last_err})")
+
+
+async def rustore_check_subscription(purchase_id: str, product_id: str) -> dict:
+    """Валидация подписки через /public/v5/subscription.
+
+    Сначала боевой эндпоинт; при 404 — песочница (/public/sandbox/v5):
+    покупки тестовых аккаунтов RuStore записывает только туда.
+    Возвращает body при активной подписке, иначе raise 400.
+    """
+    def _validate(body: dict) -> dict:
+        expiry_ms = int(body.get("expiryTimeMillis", "0") or 0)
+        payment_state = int(body.get("paymentState", 0) or 0)
+        if expiry_ms / 1000.0 <= time.time():
+            raise HTTPException(400, "Срок подписки истёк")
+        if payment_state not in (1, 2):  # 1 = оплачено, 2 = триал
+            raise HTTPException(400, "Подписка не оплачена")
+        return body
+
+    status, data = await _rustore_subscription_query(
+        purchase_id, product_id, sandbox=False)
+    if status == 200:
+        return _validate(data.get("body") or {})
+    if status == 404:
+        # возможно, тестовая покупка — пробуем песочницу
+        try:
+            s_status, s_data = await _rustore_subscription_query(
+                purchase_id, product_id, sandbox=True)
+        except HTTPException:
+            s_status, s_data = status, data
+        if s_status == 200:
+            return _validate(s_data.get("body") or {})
+    if 400 <= status < 500:
+        code = str(data.get("code") or status)
+        if status == 404 or "NOT_FOUND" in code.upper():
+            raise HTTPException(
+                400, "Покупка не найдена в RuStore — проверьте "
+                     "аккаунт или восстановите покупки")
+        raise HTTPException(400, f"RuStore отклонил запрос ({code})")
+    raise HTTPException(502, f"RuStore API недоступен (HTTP {status})")
 
 
 def require_admin(x_admin_token: Optional[str] = Header(None)) -> None:
