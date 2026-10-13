@@ -1,8 +1,20 @@
 # garden-calendar-ai-server
 # AI Ботаник — AI-сервер
 
-Backend-сервер и сайт проекта **«AI Ботаник»**. Основной домен:
-https://integroai.ru (запасной — garden-calendar-ai-server.onrender.com).  
+Backend-сервер и сайт проекта **«AI Ботаник»**.
+
+**Домены (мультипроектная архитектура integroai.ru):**
+
+| Адрес | Что живёт |
+|---|---|
+| `integroai.ru` | Витрина всех проектов (static/hub.html) |
+| `garden-calendar.integroai.ru` | Сайт + PWA + API «AI Ботаника» (основной) |
+| `medicine-tracker.integroai.ru` | Зарезервирован под «Трекер лекарств» (будет CNAME на свой сервис) |
+| `garden-calendar-ai-server.onrender.com` | Запасной адрес того же сервиса |
+
+Хост-роутинг: корень `/` зависит от Host (главный домен — хаб, остальное —
+лендинг Ботаника); PWA ходит в API по относительному адресу — работает
+на любом домене сервиса.  
 Принимает запросы от мобильного клиента, обрабатывает их через AI-провайдеров (DeepSeek, AITUNNEL) и возвращает структурированные ответы.
 
 ---
@@ -134,7 +146,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ## Веб-версия (PWA)
 
 PWA-клиент лежит в `static/` и раздаётся на **`/app/`**:
-https://integroai.ru/app/
+https://garden-calendar.integroai.ru/app/
 
 Рабочая копия исходников: `Desktop/GardenCalendar/pwa/` (в репо
 копируется при деплое). Функционально повторяет Android-версию и на
