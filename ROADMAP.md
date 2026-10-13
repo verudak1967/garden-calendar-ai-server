@@ -428,10 +428,16 @@ Ktor/VPS-прокси не создаём), подписку валидируе�
 
 **Статус техники (готово):**
 - [x] Сервер: FREE_DAILY_LIMIT 7, PREMIUM 100 (fair-use),
-      /api/subscription/activate + RuStore Public API v5
+      /api/subscription/activate + RuStore Public API
       (JWE-аутентификация SHA512withRSA, фолбэк
       public-api.rustore.ru -> public-api-m.rustore.ru),
       premium в /api/usage, premium_devices в админке.
+      ВАЖНО (13.10.2026): рабочий эндпоинт подписок — **v4**
+      (`/public/v4/subscription/...`); задокументированный v5
+      в доках RuStore на 10.2026 НЕ развёрнут (nginx 404) —
+      сервер пробует v4 -> v5 (порядок устойчив к миграции).
+      public-api-m использует сертификаты российского НУЦ —
+      в репозитории rustore_root_ca.pem (добавлен в SSL-контекст).
 - [x] Android 2.1 (code 4): Pay SDK 11.1.0 (BOM 2026.08.01),
       PayManager (покупка ONE_STEP, восстановление через
       getPurchases + сервер), PaywallScreen (299/1990, триал),
@@ -439,11 +445,16 @@ Ktor/VPS-прокси не создаём), подписку валидируе�
       ai-botanik-pay, UsageInfo.premium.
 - [x] Юридика: раздел «Платежи» в политиках (web+app), оферта
       /offer, тексты лимита 7.
-- [ ] env на Render: RUSTORE_KEY_ID + RUSTORE_PRIVATE_KEY
-      (после создания ключа API в консоли).
-- [ ] Товары в консоли: premium_month 299 ₽, premium_year 1990 ₽,
-      бесплатный период 7 дней.
-- [ ] Сквозной тест на sandbox-платежах; публикация 2.1.
+- [x] env на Render: RUSTORE_KEY_ID + RUSTORE_PRIVATE_KEY
+      (ключ API создан в консоли 13.10.2026).
+- [x] Товары в консоли: premium_month 299 ₽, premium_year 1990 ₽
+      (бесплатный период 7 дней на 13.10 не включён — проверить
+      при желании, см. ниже).
+- [x] Сквозной тест на РЕАЛЬНОЙ оплате 299 ₽ (13.10.2026):
+      покупка в Pay SDK -> purchaseId -> /activate -> валидация
+      v4 -> premium до 13.11.2026; на телефоне «Pro · 0 из 100».
+      Автопродление включено (проверить продление ~13.11).
+- [ ] Публикация 2.1 (code 4) в RuStore + changelog.
 
 **БЛОКЕР (2026):** с 01.02.2026 платежи RuStore доступны только
 ИП/юрлицам (самозанятые отключены). Требуется оформить ИП на НПД
