@@ -1328,10 +1328,6 @@ def root_page(request: Request):
     site = os.path.join(static_dir, "site", "index.html")
     if host in {"integroai.ru", "www.integroai.ru"} and os.path.isfile(hub):
         return FileResponse(hub, media_type="text/html; charset=utf-8")
-    if host == "medicine-tracker.integroai.ru":
-        teaser = os.path.join(static_dir, "medicine-tracker", "index.html")
-        if os.path.isfile(teaser):
-            return FileResponse(teaser, media_type="text/html; charset=utf-8")
     if os.path.isfile(site):
         return FileResponse(site, media_type="text/html; charset=utf-8")
     return {"status": "ok", "service": "ai-botanik"}
