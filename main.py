@@ -305,30 +305,38 @@ def _rustore_jwe_token() -> str:
 
 async def _rustore_subscription_query(purchase_id: str, product_id: str,
                                       sandbox: bool) -> tuple[int, dict]:
-    """Один запрос к v5 (sandbox=True -> /public/sandbox/v5).
+    """Запрос данных подписки. Пробует v4 и v5 (v5 задокументирован RuStore,
+    но на 10.2026 маршрут ещё не развёрнут — рабочая версия v4; проверяем
+    обе, чтобы не зависеть от порядка их миграции). Не-JSON ответ (nginx
+    html 404 = маршрута нет) -> следующая версия пути.
     Возвращает (http_status, json|{})."""
     token = _rustore_jwe_token()
-    prefix = "/public/sandbox/v5/subscription/" if sandbox \
-        else "/public/v5/subscription/"
+    versions = ("v4", "v5")
     last_err = None
-    for host in RUSTORE_API_HOSTS:
-        try:
-            async with httpx.AsyncClient(timeout=15.0,
-                                         verify=_RUSTORE_SSL) as client:
-                resp = await client.get(
-                    f"{host}{prefix}"
-                    f"{RUSTORE_PACKAGE_NAME}/{product_id}/{purchase_id}",
-                    headers={"Public-Token": token},
-                )
+    for version in versions:
+        prefix = f"/public{'/sandbox' if sandbox else ''}/{version}/subscription/"
+        for host in RUSTORE_API_HOSTS:
             try:
-                data = resp.json()
-            except Exception:
-                data = {}
-            return resp.status_code, data
-        except HTTPException:
-            raise
-        except Exception as e:
-            last_err = f"{host}: {e}"
+                async with httpx.AsyncClient(timeout=15.0,
+                                             verify=_RUSTORE_SSL) as client:
+                    resp = await client.get(
+                        f"{host}{prefix}"
+                        f"{RUSTORE_PACKAGE_NAME}/{product_id}/{purchase_id}",
+                        headers={"Public-Token": token},
+                    )
+                ct = resp.headers.get("content-type", "")
+                if "application/json" in ct:
+                    try:
+                        data = resp.json()
+                    except Exception:
+                        data = {}
+                    return resp.status_code, data
+                # маршрут не существует (html 404 от nginx) — следующая версия
+                last_err = f"{host}/{version}: HTTP {resp.status_code} (no json)"
+            except HTTPException:
+                raise
+            except Exception as e:
+                last_err = f"{host}/{version}: {e}"
     raise HTTPException(status_code=502,
                         detail=f"RuStore API недоступен ({last_err})")
 
