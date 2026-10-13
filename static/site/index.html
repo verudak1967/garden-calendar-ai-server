@@ -93,6 +93,9 @@ h2{font-size:clamp(26px,3.4vw,36px);margin-bottom:14px}
 .phone{display:inline-block;background:var(--ink);border-radius:26px;padding:10px;
   box-shadow:0 18px 44px rgba(34,48,31,.18)}
 .phone img{display:block;width:100%;max-width:300px;border-radius:18px}
+.ph{display:inline-block;background:#fff;border:1px solid var(--line);border-radius:22px;padding:10px;
+  box-shadow:0 18px 44px rgba(34,48,31,.12)}
+.ph img{display:block;width:100%;max-width:300px;border-radius:14px}
 .shot figcaption{margin-top:14px;color:var(--muted);font-size:14.5px;max-width:340px;
   margin-left:auto;margin-right:auto}
 /* feature cards */
@@ -260,6 +263,14 @@ footer{border-top:1px solid var(--line);padding:34px 0 60px;color:var(--muted);f
         <figcaption>Карточка растения: кличка, возраст «с нами», статус полива
           и план задач на сезон.</figcaption>
       </figure>
+      <figure class="shot">
+        <span class="phone"><img src="shots/calendar.png" alt="Календарь задач сада"></span>
+        <figcaption>Календарь: задачи всех растений по дням, статусы под контролем.</figcaption>
+      </figure>
+      <figure class="shot">
+        <span class="phone"><img src="shots/ai.png" alt="Справка AI-агронома"></span>
+        <figcaption>Справка AI: вопрос текстом или с фотографией, история запросов.</figcaption>
+      </figure>
     </div>
   </div>
 </section>
@@ -299,12 +310,14 @@ footer{border-top:1px solid var(--line);padding:34px 0 60px;color:var(--muted);f
     </div>
     <div class="shots" style="margin-top:34px">
       <figure class="shot">
-        <span class="phone"><img src="shots/calendar.png" alt="Календарь задач сада"></span>
-        <figcaption>Календарь: задачи всех растений по дням, статусы под контролем.</figcaption>
+        <span class="ph"><img src="shots/plant-1.jpg" alt="Настоящее фото: молодое растение в горшке на подоконнике"></span>
+        <figcaption>Не стоковые картинки: живые растения из домашнего сада — каждое
+          со своей карточкой и историей.</figcaption>
       </figure>
       <figure class="shot">
-        <span class="phone"><img src="shots/ai.png" alt="Справка AI-агронома"></span>
-        <figcaption>Справка AI: вопрос текстом или с фотографией, история запросов.</figcaption>
+        <span class="ph"><img src="shots/plant-2.jpg" alt="Настоящее фото: замиокулькас в белом горшке"></span>
+        <figcaption>Замиокулькас — тоже сад: пересадка, грунт и свет под присмотром
+          Ботаника.</figcaption>
       </figure>
     </div>
   </div>
