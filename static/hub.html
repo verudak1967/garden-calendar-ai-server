@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>integroai — проекты</title>
+<link rel="icon" href="/app/icons/icon-192.png">
+<style>
+:root{
+  --bg:#FAF7F0; --paper:#fff; --ink:#22301F; --muted:#6E7A67;
+  --green:#2E7D32; --green-deep:#1B4D2A; --green-soft:#E7F1E4;
+  --green-line:#D4E3CE; --accent:#D9622B; --line:#E9E2D2;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--ink);
+  font:16px/1.65 Arial,Helvetica,sans-serif}
+h1,h2,h3{font-family:"Times New Roman",Times,serif;font-weight:600;line-height:1.2}
+.wrap{max-width:860px;margin:0 auto;padding:0 20px}
+header{padding:56px 0 8px;text-align:center}
+.brand{font-family:"Times New Roman",Times,serif;font-size:34px;color:var(--green-deep)}
+.brand span{color:var(--accent)}
+.tagline{color:var(--muted);margin-top:8px;font-size:15px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+  gap:18px;margin:44px 0 64px}
+.card{background:var(--paper);border:1px solid var(--line);border-radius:20px;
+  padding:28px;text-decoration:none!important;color:var(--ink);
+  transition:.15s;display:block}
+.card:hover{border-color:var(--green);box-shadow:0 10px 30px rgba(34,48,31,.08)}
+.card .pic{width:52px;height:52px;border-radius:14px;background:var(--green-soft);
+  display:flex;align-items:center;justify-content:center;margin-bottom:16px}
+.card .pic svg{width:28px;height:28px;color:var(--green)}
+.card h3{font-size:21px;margin-bottom:6px}
+.card p{color:var(--muted);font-size:14.5px;margin-bottom:14px}
+.card .go{color:var(--green);font-weight:600;font-size:14.5px}
+.card.soon{opacity:.75}
+.card.soon .pic{background:var(--line)}
+.card.soon .pic svg{color:#9AA48F}
+.badge{display:inline-block;background:var(--green-soft);color:var(--green-deep);
+  border:1px solid var(--green-line);border-radius:999px;padding:3px 12px;
+  font-size:12.5px;margin-left:8px;vertical-align:2px}
+.badge.grey{background:#F1EDE3;color:#8A8272;border-color:#E0D9C6}
+footer{border-top:1px solid var(--line);padding:26px 0 44px;color:var(--muted);
+  font-size:14px;text-align:center}
+footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header class="wrap">
+  <div class="brand">integro<span>ai</span></div>
+  <p class="tagline">Небольшая мастерская приложений с ИИ — для сада и для здоровья</p>
+</header>
+
+<main class="wrap">
+  <div class="grid">
+    <a class="card" href="https://garden-calendar.integroai.ru/">
+      <span class="pic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21v-8"/><path d="M12 13C12 8.5 9 6 4.5 6c0 4.5 3 7 7.5 7z"/><path d="M12 11c0-3.6 2.6-5.5 7.5-5.5 0 3.9-2.6 5.5-7.5 5.5z"/></svg>
+      </span>
+      <h3>AI Ботаник</h3>
+      <p>Умный календарь сада: фото растения — AI определит вид, составит план
+        ухода на сезон и будет следить за поливами. Веб-версия и Android (RuStore).</p>
+      <span class="go">garden-calendar.integroai.ru →</span>
+      <span class="badge">работает</span>
+    </a>
+    <div class="card soon">
+      <span class="pic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6v3H9z"/><path d="M7 6h10a1.5 1.5 0 0 1 1.5 1.5V21H5.5V7.5A1.5 1.5 0 0 1 7 6z"/><path d="M12 10v7M8.5 13.5h7"/></svg>
+      </span>
+      <h3>Трекер лекарств</h3>
+      <p>Напоминания о приёмах, расписание курса и связь «опекун ↔ пациент»
+        для заботы о близких.</p>
+      <span class="go">medicine-tracker.integroai.ru</span>
+      <span class="badge grey">в разработке</span>
+    </div>
+  </div>
+</main>
+
+<footer class="wrap">
+  © 2026 integroai · <a href="mailto:navi-com@yandex.ru">navi-com@yandex.ru</a>
+</footer>
+
+</body>
+</html>

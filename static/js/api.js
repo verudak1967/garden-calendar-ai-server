@@ -1,7 +1,9 @@
 // Клиент AI-сервера «AI Ботаник» (FastAPI на Render).
 // Все запросы включают device_id и часовой пояс — как это делает Android-клиент.
 
-const API_BASE = 'https://garden-calendar-ai-server.onrender.com';
+// Относительный базовый адрес: PWA ходит в API того домена, на котором
+// открыта (garden-calendar.integroai.ru, onrender-запасной, localhost).
+const API_BASE = '';
 const TIMEOUT_MS = 90_000; // Render на бесплатном тарифе может просыпаться до 60 сек
 
 export class ApiError extends Error {

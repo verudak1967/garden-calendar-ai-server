@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Header, Response
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -1312,6 +1313,23 @@ def build_plan_prompt() -> str:
 
 @app.get("/health")
 def health():
+    return {"status": "ok", "service": "ai-botanik"}
+
+
+# Корень — хост-зависимый: главный домен integroai.ru показывает витрину
+# проектов (static/hub.html), поддомены (garden-calendar., medicine-tracker.)
+# и onrender — лендинг конкретного проекта (пока всегда «AI Ботаника»).
+# Регистрируется до корневого mount статики и выигрывает у него на "/".
+@app.get("/", include_in_schema=False)
+def root_page(request: Request):
+    static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    hub = os.path.join(static_dir, "hub.html")
+    site = os.path.join(static_dir, "site", "index.html")
+    if host in {"integroai.ru", "www.integroai.ru"} and os.path.isfile(hub):
+        return FileResponse(hub, media_type="text/html; charset=utf-8")
+    if os.path.isfile(site):
+        return FileResponse(site, media_type="text/html; charset=utf-8")
     return {"status": "ok", "service": "ai-botanik"}
 
 
