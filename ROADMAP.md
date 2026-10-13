@@ -729,9 +729,9 @@ APK 1.1 (versionCode 2) отправлен на модерацию в RuStore.
 - [ ] Заполнить карточку: заголовок «AI Ботаник: Сад, Огород, Планировщик»,
       ключевые слова — набор №1 (раздел 13), политика:
       https://garden-calendar-ai-server.onrender.com/privacy
-      (зеркало на Render; Cloudflare-хостинг privacy.integroai.ru из РФ
-      частично недоступен, apex integroai.ru без A-записи — починить
-      в Cloudflare).
+      [x] DNS починен 11.10.2026: integroai.ru и www — CNAME на Render,
+      режим «только DNS». Основной адрес сайта и документов —
+      https://integroai.ru; onrender остаётся запасным.
 - [x] Дисциплина версий: versionCode 3 = версия 2.0 «Модель данных v2»
       (собрана и установлена 06.10.2026 поверх 1.1 на реальных данных,
       миграция Room 8->9 прошла; APK: `v3/app-release-2.0.apk`,

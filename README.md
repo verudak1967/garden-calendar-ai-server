@@ -1,7 +1,8 @@
 # garden-calendar-ai-server
 # AI Ботаник — AI-сервер
 
-Backend-сервер для Android-приложения **«AI Ботаник»** (RuStore).  
+Backend-сервер и сайт проекта **«AI Ботаник»**. Основной домен:
+https://integroai.ru (запасной — garden-calendar-ai-server.onrender.com).  
 Принимает запросы от мобильного клиента, обрабатывает их через AI-провайдеров (DeepSeek, AITUNNEL) и возвращает структурированные ответы.
 
 ---
@@ -133,7 +134,7 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ## Веб-версия (PWA)
 
 PWA-клиент лежит в `static/` и раздаётся на **`/app/`**:
-https://garden-calendar-ai-server.onrender.com/app/
+https://integroai.ru/app/
 
 Рабочая копия исходников: `Desktop/GardenCalendar/pwa/` (в репо
 копируется при деплое). Функционально повторяет Android-версию и на
@@ -328,7 +329,9 @@ API-ключи хранятся только в переменных окруж�
 Все данные хранятся локально на устройстве пользователя (Room).
 
 Ссылки
-Политика конфиденциальности: https://garden-calendar-ai-server.onrender.com/privacy (зеркало на Render; privacy.integroai.ru частично недоступен из РФ — Cloudflare)
+Политика конфиденциальности: https://integroai.ru/privacy
+Условия подписки: https://integroai.ru/offer
+Сайт проекта: https://integroai.ru/
 
 RuStore: https://www.rustore.ru/catalog/app/ru.verudak.gardencalendar
 
