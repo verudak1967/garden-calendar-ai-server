@@ -224,6 +224,31 @@ if not ADMIN_TOKEN:
 RUSTORE_KEY_ID = os.getenv("RUSTORE_KEY_ID")
 RUSTORE_PRIVATE_KEY_B64 = os.getenv("RUSTORE_PRIVATE_KEY")
 RUSTORE_PACKAGE_NAME = os.getenv("RUSTORE_PACKAGE_NAME", "ru.verudak.gardencalendar")
+
+
+def _rustore_ssl_context():
+    """SSL-контекст для RuStore Public API.
+
+    Основной хост использует HARICA (есть в certifi), а запасной
+    public-api-m.rustore.ru — сертификаты российского НУЦ Минцифры
+    (Russian Trusted Root CA), которых нет в Mozilla CA Store.
+    Корень лежит в rustore_root_ca.pem рядом с main.py.
+    """
+    import ssl
+    ctx = ssl.create_default_context()
+    try:
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except ImportError:
+        pass
+    root = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "rustore_root_ca.pem")
+    if os.path.isfile(root):
+        ctx.load_verify_locations(cafile=root)
+    return ctx
+
+
+_RUSTORE_SSL = _rustore_ssl_context()
 # домен мигрирует на российские сертификаты — держим фолбэк
 RUSTORE_API_HOSTS = [
     "https://public-api.rustore.ru",
@@ -262,6 +287,7 @@ def _rustore_jwe_token() -> str:
                 json={"keyId": RUSTORE_KEY_ID, "timestamp": timestamp,
                       "signature": signature},
                 timeout=15.0,
+                verify=_RUSTORE_SSL,
             )
             data = resp.json()
             if resp.status_code == 200 and data.get("code") == "OK":
@@ -284,7 +310,8 @@ async def rustore_check_subscription(purchase_id: str, product_id: str) -> dict:
     last_err = None
     for host in RUSTORE_API_HOSTS:
         try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
+            async with httpx.AsyncClient(timeout=15.0,
+                                         verify=_RUSTORE_SSL) as client:
                 resp = await client.get(
                     f"{host}/public/v5/subscription/"
                     f"{RUSTORE_PACKAGE_NAME}/{product_id}/{purchase_id}",
@@ -299,6 +326,20 @@ async def rustore_check_subscription(purchase_id: str, product_id: str) -> dict:
                 if payment_state not in (1, 2):  # 1 = оплачено, 2 = триал
                     raise HTTPException(400, "Подписка не оплачена")
                 return body
+            if 400 <= resp.status_code < 500:
+                # RuStore ответил по существу (нет такой покупки, плохой
+                # токен и т.п.) — это не сбой хоста, фолбэк не нужен.
+                try:
+                    data = resp.json()
+                    code = str(data.get("code") or resp.status_code)
+                except Exception:
+                    code = str(resp.status_code)
+                if resp.status_code == 404 or "NOT_FOUND" in code.upper():
+                    raise HTTPException(
+                        400, "Покупка не найдена в RuStore — проверьте "
+                             "аккаунт или восстановите покупки")
+                raise HTTPException(
+                    400, f"RuStore отклонил запрос ({code})")
             last_err = f"{host}: HTTP {resp.status_code}"
         except HTTPException:
             raise
