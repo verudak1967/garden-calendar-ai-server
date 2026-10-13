@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Трекер лекарств — скоро</title>
+<meta name="description" content="Трекер лекарств: напоминания о приёмах, расписание курса и связь «опекун ↔ пациент». Проект в разработке.">
+<link rel="icon" href="/medicine-tracker/icon-192.png">
+<style>
+:root{
+  --mint:#57A08D; --mint-deep:#3E7D6C; --mint-soft:#EDF5F1;
+  --peach:#E0936B; --ink:#2B2620; --muted:#6E675E; --bg:#FBFAF7; --line:#E5E0D8;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Georgia,'Times New Roman',serif;color:var(--ink);background:var(--bg);
+  line-height:1.65}
+h1,h2,h3{font-weight:600}
+.wrap{max-width:720px;margin:0 auto;padding:0 20px}
+header{background:var(--mint);color:#fff;padding:64px 0 56px;text-align:center}
+header .badge{display:inline-block;border:1px solid rgba(255,255,255,.5);
+  border-radius:999px;padding:5px 16px;font-size:13.5px;margin-bottom:18px}
+header h1{font-size:clamp(30px,5vw,44px)}
+header p{margin:14px auto 0;max-width:480px;opacity:.92;font-size:17px}
+.pulse{display:inline-flex;align-items:center;gap:10px;margin-bottom:6px}
+.pulse svg{width:46px;height:46px;color:#fff}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--peach);
+  animation:p 1.6s infinite}
+@keyframes p{0%,100%{opacity:1}50%{opacity:.25}}
+main{padding:56px 0 24px}
+.feat{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.f{background:#fff;border:1px solid var(--line);border-radius:16px;padding:22px}
+.f svg{width:28px;height:28px;color:var(--mint-deep);margin-bottom:10px}
+.f h3{font-size:17.5px;margin-bottom:6px}
+.f p{font-size:14.5px;color:var(--muted)}
+.soon-box{margin-top:40px;background:var(--mint-soft);border-left:4px solid var(--mint);
+  border-radius:0 14px 14px 0;padding:22px 24px}
+.soon-box b{color:var(--mint-deep)}
+.soon-box p{color:var(--muted);font-size:15.5px;margin-top:6px}
+.links{margin-top:18px;display:flex;gap:12px;flex-wrap:wrap}
+.btn{display:inline-block;border-radius:12px;padding:11px 22px;font-size:15px;
+  text-decoration:none!important;font-family:Georgia,serif}
+.btn-mint{background:var(--mint-deep);color:#fff}
+.btn-mint:hover{background:var(--mint)}
+.btn-ghost{border:1.5px solid var(--mint);color:var(--mint-deep)}
+footer{padding:34px 0 50px;color:var(--muted);font-size:14px;text-align:center}
+footer a{color:var(--muted)}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <span class="pulse">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.2-5 3.6 10L15.4 12H21"/></svg>
+      <span class="dot"></span>
+    </span>
+    <div><span class="badge">проект integroai · в разработке</span></div>
+    <h1>Трекер лекарств</h1>
+    <p>Никаких «принял или забылось»: приёмы, курсы и забота о близких —
+      под контролем, спокойно и без багажа бумажек.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <div class="feat">
+    <div class="f">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 5.5h10a3 3 0 0 1 3 3v9a3 3 0 0 1 -3 3H7a3 3 0 0 1 -3,-3v-9a3 3 0 0 1 3,-3z"/><path d="M8 3v4.5M16 3v4.5M4 10.5h16"/></svg>
+      <h3>Расписание приёмов</h3>
+      <p>Курс, дозировка, время — приложение напомнит само, в нужный момент.</p>
+    </div>
+    <div class="f">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21c-4.4-3.6-8-6.6-8-10.2C4 7.6 6.4 5.5 9 5.5c1.3 0 2.4.6 3 1.5.6-.9 1.7-1.5 3-1.5 2.6 0 5 2.1 5 5.3C20 14.4 16.4 17.4 12 21z"/></svg>
+      <h3>Связь с близкими</h3>
+      <p>Опекун видит, принят ли курс, и может настроить расписание дистанционно.</p>
+    </div>
+    <div class="f">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5.5v11M6.5 11h11"/><circle cx="12" cy="12" r="9.5"/></svg>
+      <h3>История и контроль</h3>
+      <p>Что принято, что пропущено — дневник приёмов и статусы на виджете.</p>
+    </div>
+  </div>
+
+  <div class="soon-box">
+    <b>Готовим к выпуску</b>
+    <p>Приложение для Android и веб-версия. Хотите попасть в первые пользователи
+      или задать вопрос — напишите: <a href="mailto:navi-com@yandex.ru">navi-com@yandex.ru</a>.</p>
+    <div class="links">
+      <a class="btn btn-mint" href="https://integroai.ru/">Все проекты integroai</a>
+      <a class="btn btn-ghost" href="https://garden-calendar.integroai.ru/">Соседний проект — AI Ботаник</a>
+    </div>
+  </div>
+</main>
+
+<footer class="wrap">
+  © 2026 integroai · <a href="mailto:navi-com@yandex.ru">navi-com@yandex.ru</a>
+</footer>
+
+</body>
+</html>
