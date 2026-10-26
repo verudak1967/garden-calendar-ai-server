@@ -1819,8 +1819,7 @@ PLAN_LAYOUT_TYPES = {"BED", "GREENHOUSE", "TREE", "BUSH",
 
 
 class PlanLayoutRequest(BaseModel):
-    area: str                            # «6 соток» / «25x40» — как ввёл пользователь
-    shape: str = "прямоугольный"         # прямоугольный / г-образный / произвольный
+    boundary: list[list[float]]          # контур участка в метрах, минимум 3 точки
     wishes: list[str] = []               # пресеты: теплица, грядки, компост...
     note: str = ""                       # свободный текст (нюансы, стороны света)
     image_base64: str | None = None      # фото схемы (без data:-префикса)
@@ -1828,38 +1827,35 @@ class PlanLayoutRequest(BaseModel):
     timezone_offset_minutes: int = 0
 
 
-def _plan_layout_system_prompt() -> str:
-    return (
-        "Ты — планировщик садового участка. Верни СТРОГО JSON без markdown:\n"
-        '{"boundary": [[x,y],...] или null, "objects": '
-        '[{"type":"BED","x":0,"y":0,"w":1,"h":6,"rotation":0,"label":""}]}\n'
-        "Координаты — метры, начало слева-сверху; X вправо, Y вниз. "
-        "СЕВЕР — сверху.\n"
-        f"Холст максимум {PLAN_LAYOUT_MAX_W:.0f} м по ширине и "
-        f"{PLAN_LAYOUT_MAX_H:.0f} м по высоте — впиши план с полями 0,5 м.\n"
-        "boundary — замкнутый контур участка, 4+ точек по часовой; null, "
-        "если участок прямоугольный.\n"
-        "type только из: BED, GREENHOUSE, TREE, BUSH, PATH, BUILDING, "
-        "GATE, WICKET.\n"
-        "Агрономия: теплица — ближе к северу; грядки — южнее, ширина "
-        "0,6–1,2 м, между ними дорожки 0,4–0,6 м; высокие культуры "
-        "(томаты) — не южнее низких, чтобы не затеняли; плодовые деревья "
-        "— с северной стороны; компост — дальний угол; калитка и ворота — "
-        "со стороны входа, если не сказано иное.\n"
-        "label — коротко по-русски («Теплица», «Томаты»), может быть "
-        "пустым. Не более 40 объектов. Числа без единиц измерения.\n"
-        "ЗАПРЕЩЕНО: Markdown, текст до/после JSON."
-    )
+def _plan_layout_system_prompt(boundary: list) -> str:
+    bstr = "; ".join(f"({p[0]:.1f},{p[1]:.1f})" for p in boundary)
+    rules = [
+        "Ты — планировщик садового участка. Контур участка УЖЕ нарисован "
+        f"(метры, обход): {bstr}. Расставь объекты СТРОГО ВНУТРИ контура.",
+        "Верни СТРОГО JSON без markdown: "
+        '{"objects": [{"type":"BED","x":0,"y":0,"w":1,"h":6,"rotation":0,"label":""}]}',
+        "Правила:",
+        "- СЕВЕР — сверху, X вправо (восток), Y вниз (юг).",
+        "- Каждый объект целиком внутри контура, отступ от границ 0,3-0,5 м.",
+        "- Используй площадь разумно: не теснись в одном углу, оставь дорожки.",
+        "- type только из: BED, GREENHOUSE, TREE, BUSH, PATH, BUILDING, GATE, WICKET.",
+        "- Агрономия: теплица — ближе к северу; грядки — южнее, ширина 0,6-1,2 м, "
+        "длина 4-8 м, между ними дорожки 0,4-0,6 м; высокие культуры не южнее низких; "
+        "плодовые деревья — вдоль северной стороны; компост — дальний угол; "
+        "калитка/ворота — к стороне входа.",
+        "- label — коротко по-русски, может быть пустым.",
+        "- Не более 40 объектов, числа без единиц.",
+        "ЗАПРЕЩЕНО: Markdown, текст до/после JSON, поле boundary в ответе.",
+    ]
+    return "\n".join(rules)
 
 
 def _plan_layout_user_prompt(req: PlanLayoutRequest) -> str:
     wishes = "; ".join(req.wishes) if req.wishes else "не указаны"
     return (
-        f"Размер участка: {req.area}\n"
-        f"Форма: {req.shape}\n"
         f"Что разместить: {wishes}\n"
         f"Пожелания: {req.note.strip() or 'нет'}\n\n"
-        "Составь черновую раскладку участка. JSON."
+        "Расставь объекты внутри контура. JSON."
     )
 
 
@@ -1905,12 +1901,32 @@ def _validate_plan_layout(data: dict) -> dict:
     return {"boundary": boundary, "objects": objects}
 
 
+def _point_in_poly(poly: list, px: float, py: float) -> bool:
+    inside = False
+    j = len(poly) - 1
+    for i in range(len(poly)):
+        ax, ay = poly[i]; bx, by = poly[j]
+        if (ay > py) != (by > py) and                 px < (bx - ax) * (py - ay) / (by - ay) + ax:
+            inside = not inside
+        j = i
+    return inside
+
+
 @app.post("/api/plan-layout")
 async def plan_layout(req: PlanLayoutRequest):
+    boundary = []
+    for p in (req.boundary or [])[:60]:
+        try:
+            boundary.append([float(p[0]), float(p[1])])
+        except (TypeError, ValueError, IndexError):
+            continue
+    if len(boundary) < 3:
+        raise HTTPException(400, "Нужен контур участка (минимум 3 точки)")
+
     used, limit = increment_daily_usage(
         req.device_id, req.timezone_offset_minutes or 0)
 
-    system_prompt = _plan_layout_system_prompt()
+    system_prompt = _plan_layout_system_prompt(boundary)
     user_prompt = _plan_layout_user_prompt(req)
 
     if req.image_base64:
@@ -1932,17 +1948,20 @@ async def plan_layout(req: PlanLayoutRequest):
         from_cache = False
 
     result = _validate_plan_layout(parsed)
-    if not result["objects"] and not result["boundary"]:
+    result["objects"] = [
+        o for o in result["objects"]
+        if _point_in_poly(boundary, o["x"] + o["w"] / 2.0, o["y"] + o["h"] / 2.0)
+    ]
+    if not result["objects"]:
         raise HTTPException(
-            502, "Модель не смогла составить чертёж — уточните описание")
+            502, "Модель не смогла расставить объекты — уточните пожелания")
 
     metrics["plan_layout_total"] = metrics.get("plan_layout_total", 0) + 1
     print(f"Plan layout: {len(result['objects'])} objects, "
-          f"boundary={'yes' if result['boundary'] else 'no'}, "
+          f"boundary points={len(boundary)}, "
           f"photo={'yes' if req.image_base64 else 'no'}")
 
     return _json_utf8_response({
-        "boundary": result["boundary"],
         "objects": result["objects"],
         "used": used,
         "limit": limit,
