@@ -1808,6 +1808,148 @@ async def generate_plan(req: PlanRequest):
     })
 
 
+# ============================================================
+# AI-чертёж участка: /api/plan-layout (фото схемы или описание)
+# ============================================================
+
+PLAN_LAYOUT_MAX_W = 60.0   # метры, границы холста приложения
+PLAN_LAYOUT_MAX_H = 40.0
+PLAN_LAYOUT_TYPES = {"BED", "GREENHOUSE", "TREE", "BUSH",
+                     "PATH", "BUILDING", "GATE", "WICKET"}
+
+
+class PlanLayoutRequest(BaseModel):
+    area: str                            # «6 соток» / «25x40» — как ввёл пользователь
+    shape: str = "прямоугольный"         # прямоугольный / г-образный / произвольный
+    wishes: list[str] = []               # пресеты: теплица, грядки, компост...
+    note: str = ""                       # свободный текст (нюансы, стороны света)
+    image_base64: str | None = None      # фото схемы (без data:-префикса)
+    device_id: str = "unknown"
+    timezone_offset_minutes: int = 0
+
+
+def _plan_layout_system_prompt() -> str:
+    return (
+        "Ты — планировщик садового участка. Верни СТРОГО JSON без markdown:\n"
+        '{"boundary": [[x,y],...] или null, "objects": '
+        '[{"type":"BED","x":0,"y":0,"w":1,"h":6,"rotation":0,"label":""}]}\n'
+        "Координаты — метры, начало слева-сверху; X вправо, Y вниз. "
+        "СЕВЕР — сверху.\n"
+        f"Холст максимум {PLAN_LAYOUT_MAX_W:.0f} м по ширине и "
+        f"{PLAN_LAYOUT_MAX_H:.0f} м по высоте — впиши план с полями 0,5 м.\n"
+        "boundary — замкнутый контур участка, 4+ точек по часовой; null, "
+        "если участок прямоугольный.\n"
+        "type только из: BED, GREENHOUSE, TREE, BUSH, PATH, BUILDING, "
+        "GATE, WICKET.\n"
+        "Агрономия: теплица — ближе к северу; грядки — южнее, ширина "
+        "0,6–1,2 м, между ними дорожки 0,4–0,6 м; высокие культуры "
+        "(томаты) — не южнее низких, чтобы не затеняли; плодовые деревья "
+        "— с северной стороны; компост — дальний угол; калитка и ворота — "
+        "со стороны входа, если не сказано иное.\n"
+        "label — коротко по-русски («Теплица», «Томаты»), может быть "
+        "пустым. Не более 40 объектов. Числа без единиц измерения.\n"
+        "ЗАПРЕЩЕНО: Markdown, текст до/после JSON."
+    )
+
+
+def _plan_layout_user_prompt(req: PlanLayoutRequest) -> str:
+    wishes = "; ".join(req.wishes) if req.wishes else "не указаны"
+    return (
+        f"Размер участка: {req.area}\n"
+        f"Форма: {req.shape}\n"
+        f"Что разместить: {wishes}\n"
+        f"Пожелания: {req.note.strip() or 'нет'}\n\n"
+        "Составь черновую раскладку участка. JSON."
+    )
+
+
+def _validate_plan_layout(data: dict) -> dict:
+    def num(v, d):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return d
+
+    objects = []
+    for o in (data.get("objects") or [])[:40]:
+        if not isinstance(o, dict):
+            continue
+        t = str(o.get("type", "")).upper()
+        if t not in PLAN_LAYOUT_TYPES:
+            continue
+        w = min(max(num(o.get("w"), 1.0), 0.2), PLAN_LAYOUT_MAX_W)
+        h = min(max(num(o.get("h"), 1.0), 0.2), PLAN_LAYOUT_MAX_H)
+        x = min(max(num(o.get("x"), 0.0), 0.0), PLAN_LAYOUT_MAX_W - w)
+        y = min(max(num(o.get("y"), 0.0), 0.0), PLAN_LAYOUT_MAX_H - h)
+        objects.append({
+            "type": t,
+            "x": round(x, 1), "y": round(y, 1),
+            "w": round(w, 1), "h": round(h, 1),
+            "rotation": round(num(o.get("rotation"), 0.0)) % 360,
+            "label": str(o.get("label") or "")[:40],
+        })
+
+    boundary = None
+    b = data.get("boundary")
+    if isinstance(b, list) and len(b) >= 3:
+        pts = []
+        for p in b[:40]:
+            try:
+                px, py = float(p[0]), float(p[1])
+            except (TypeError, ValueError, IndexError):
+                continue
+            pts.append([round(min(max(px, 0.0), PLAN_LAYOUT_MAX_W), 1),
+                        round(min(max(py, 0.0), PLAN_LAYOUT_MAX_H), 1)])
+        if len(pts) >= 3:
+            boundary = pts
+    return {"boundary": boundary, "objects": objects}
+
+
+@app.post("/api/plan-layout")
+async def plan_layout(req: PlanLayoutRequest):
+    used, limit = increment_daily_usage(
+        req.device_id, req.timezone_offset_minutes or 0)
+
+    system_prompt = _plan_layout_system_prompt()
+    user_prompt = _plan_layout_user_prompt(req)
+
+    if req.image_base64:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": [
+                {"type": "text", "text":
+                    "На фото — схема/набросок участка. " + user_prompt},
+                {"type": "image_url", "image_url": {
+                    "url": f"data:image/jpeg;base64,{req.image_base64}"}},
+            ]},
+        ]
+        raw, _model = await call_aitunnel_vision(messages, max_tokens=4000)
+        parsed = _parse_json_loose(raw)
+        from_cache = False
+    else:
+        parsed = await call_deepseek_json(
+            system_prompt, user_prompt, max_tokens=4000)
+        from_cache = False
+
+    result = _validate_plan_layout(parsed)
+    if not result["objects"] and not result["boundary"]:
+        raise HTTPException(
+            502, "Модель не смогла составить чертёж — уточните описание")
+
+    metrics["plan_layout_total"] = metrics.get("plan_layout_total", 0) + 1
+    print(f"Plan layout: {len(result['objects'])} objects, "
+          f"boundary={'yes' if result['boundary'] else 'no'}, "
+          f"photo={'yes' if req.image_base64 else 'no'}")
+
+    return _json_utf8_response({
+        "boundary": result["boundary"],
+        "objects": result["objects"],
+        "used": used,
+        "limit": limit,
+        "from_cache": from_cache,
+    })
+
+
 # Запуск фонового мониторинга upstreams при старте приложения
 threading.Thread(target=_upstream_loop, daemon=True).start()
 
