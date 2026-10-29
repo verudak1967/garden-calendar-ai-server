@@ -41,7 +41,6 @@ AITUNNEL_VISION_MODELS = [
 ]
 
 # === Публичный Statuspage платформы Render ===
-RENDER_STATUS_URL = "https://status.render.com/api/v2/status.json"
 
 if not DEEPSEEK_API_KEY:
     raise RuntimeError("DEEPSEEK_API_KEY environment variable is not set")
@@ -130,7 +129,7 @@ def _maintenance_on() -> bool:
 upstream_health: dict = {
     "deepseek": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
     "aitunnel": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
-    "render": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
+    "rustore": {"status": "unknown", "latency_ms": None, "checked_at": None, "error": None},
 }
 
 
@@ -184,36 +183,27 @@ def _ping_aitunnel() -> None:
         print(f"Upstream AITUNNEL: exception {e}")
 
 
-def _ping_render() -> None:
+def _ping_rustore() -> None:
+    """Доступность RuStore Public API — от него зависит валидация подписок.
+    Любой HTTP-ответ = доступен (без ключа контент не проверить)."""
     start = time.time()
     try:
-        with httpx.Client(timeout=15.0) as client:
-            resp = client.get(RENDER_STATUS_URL)
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get("https://public-api.rustore.ru/")
         latency = int((time.time() - start) * 1000)
         now = now_iso()
-        if resp.status_code != 200:
-            upstream_health["render"] = {"status": "error", "latency_ms": latency,
-                                          "checked_at": now, "error": f"Statuspage HTTP {resp.status_code}"}
-            return
-        data = decode_json_response(resp)
-        indicator = data.get("status", {}).get("indicator", "unknown")
-        description = data.get("status", {}).get("description", "")
-        if indicator == "none":
-            upstream_health["render"] = {"status": "ok", "latency_ms": latency,
-                                          "checked_at": now, "error": None}
-        else:
-            upstream_health["render"] = {"status": "error", "latency_ms": latency,
-                                          "checked_at": now, "error": description or f"indicator={indicator}"}
+        upstream_health["rustore"] = {"status": "ok", "latency_ms": latency,
+                                      "checked_at": now, "error": None}
     except Exception as e:
         now = now_iso()
-        upstream_health["render"] = {"status": "error", "latency_ms": None,
+        upstream_health["rustore"] = {"status": "error", "latency_ms": None,
                                       "checked_at": now, "error": str(e)[:200]}
 
 
 def check_upstreams_now() -> None:
     t1 = threading.Thread(target=_ping_deepseek, daemon=True)
     t2 = threading.Thread(target=_ping_aitunnel, daemon=True)
-    t3 = threading.Thread(target=_ping_render, daemon=True)
+    t3 = threading.Thread(target=_ping_rustore, daemon=True)
     t1.start(); t2.start(); t3.start()
     t1.join(timeout=20); t2.join(timeout=20); t3.join(timeout=20)
 
