@@ -110,6 +110,19 @@ PLAN_CACHE_TTL_SECONDS = 90 * 24 * 60 * 60
 plan_cache: dict = {}
 
 
+# ========== РЕЖИМ ОБСЛУЖИВАНИЯ (MAINTENANCE=1 в .env) ==========
+# AI-запросы получают сообщение о временных проблемах, лимит не тратится.
+MAINTENANCE_MODE = os.getenv("MAINTENANCE", "0") == "1"
+MAINTENANCE_TEXT = (
+    "Временно возникают проблемы с доступом к сервису — мы уже чиним. "
+    "Ориентировочно 2-3 дня. Приносим извинения за неудобства."
+)
+
+
+def _maintenance_on() -> bool:
+    return MAINTENANCE_MODE
+
+
 # ========== ПРОВЕРКА UPSTREAMS ==========
 
 upstream_health: dict = {
@@ -1446,6 +1459,9 @@ async def subscription_activate(req: SubscriptionActivateRequest):
 
 @app.post("/api/ask", response_model=AiResponse)
 async def ask(req: AskRequest):
+    if _maintenance_on():
+        used, limit = get_daily_usage(req.device_id, req.timezone_offset_minutes or 0)
+        return _json_utf8_response({"text": MAINTENANCE_TEXT, "used": used, "limit": limit})
     verdict, reason = rule_filter(req.query)
     if verdict == "deny":
         metrics["rejected_total"] += 1
@@ -1534,6 +1550,9 @@ async def ask(req: AskRequest):
 
 @app.post("/api/ask-photo", response_model=AiResponse)
 async def ask_photo(req: AskPhotoRequest):
+    if _maintenance_on():
+        used, limit = get_daily_usage(req.device_id, req.timezone_offset_minutes or 0)
+        return _json_utf8_response({"text": MAINTENANCE_TEXT, "used": used, "limit": limit})
     tz_offset = req.timezone_offset_minutes or 0
     used, limit = increment_daily_usage(req.device_id, tz_offset)
 
@@ -1608,6 +1627,8 @@ def _parse_json_loose(text: str) -> Optional[dict]:
 
 @app.post("/api/identify")
 async def identify(req: IdentifyRequest):
+    if _maintenance_on():
+        raise HTTPException(503, MAINTENANCE_TEXT)
     tz_offset = req.timezone_offset_minutes or 0
     used, limit = increment_daily_usage(req.device_id, tz_offset)
 
@@ -1750,6 +1771,8 @@ def _format_uptime(seconds: int) -> str:
 
 @app.post("/api/generate-plan")
 async def generate_plan(req: PlanRequest):
+    if _maintenance_on():
+        raise HTTPException(503, MAINTENANCE_TEXT)
     cache_key_str = f"{req.culture_name.lower()}|{(req.variety or '').lower()}|{req.region_zone}|{req.phase}"
 
     tz_offset = req.timezone_offset_minutes or 0
@@ -1914,6 +1937,8 @@ def _point_in_poly(poly: list, px: float, py: float) -> bool:
 
 @app.post("/api/plan-layout")
 async def plan_layout(req: PlanLayoutRequest):
+    if _maintenance_on():
+        raise HTTPException(503, MAINTENANCE_TEXT)
     boundary = []
     for p in (req.boundary or [])[:60]:
         try:
