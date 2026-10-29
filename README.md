@@ -3,6 +3,13 @@
 
 Backend-сервер и сайт проекта **«AI Ботаник»**.
 
+**Прод (с 29.10.2026): RUVDS 45.132.17.96 (Москва, Ubuntu 24.04)**, рядом с
+medtracker-api: `/opt/garden-calendar`, venv, systemd `garden-calendar`
+(uvicorn 127.0.0.1:8090), nginx + certbot. Секреты: `.env` (600).
+Обновление: tar-архивом по SSH + `systemctl restart garden-calendar`.
+Мониторинг: UptimeRobot → /health (интервал 5 мин — спать нечему).
+Render удалён (исчерпание бесплатных часов воркспейса).
+
 **Домены (мультипроектная архитектура integroai.ru):**
 
 | Адрес | Что живёт |
@@ -10,7 +17,7 @@ Backend-сервер и сайт проекта **«AI Ботаник»**.
 | `integroai.ru` | Витрина всех проектов (static/hub.html) |
 | `garden-calendar.integroai.ru` | Сайт + PWA + API «AI Ботаника» (основной) |
 | `medicine-tracker.integroai.ru` | Зарезервирован под «Трекер лекарств» (будет CNAME на свой сервис) |
-| `garden-calendar-ai-server.onrender.com` | Запасной адрес того же сервиса |
+| ~~`garden-calendar-ai-server.onrender.com`~~ | Удалён (Render закрыт 29.10.2026 — лимит часов) |
 
 Хост-роутинг: корень `/` зависит от Host (главный домен — хаб, остальное —
 лендинг Ботаника); PWA ходит в API по относительному адресу — работает
