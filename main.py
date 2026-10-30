@@ -111,7 +111,7 @@ plan_cache: dict = {}
 
 # ========== РЕЖИМ ОБСЛУЖИВАНИЯ (MAINTENANCE=1 в .env) ==========
 # AI-запросы получают сообщение о временных проблемах, лимит не тратится.
-MAINTENANCE_MODE = os.getenv("MAINTENANCE", "1") == "1"
+MAINTENANCE_MODE = os.getenv("MAINTENANCE", "0") == "1"
 MAINTENANCE_TEXT = os.getenv(
     "MAINTENANCE_TEXT",
     "Временно возникают проблемы с доступом к сервису — мы уже чиним. "
