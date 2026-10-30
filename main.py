@@ -604,9 +604,37 @@ FREE_DAILY_LIMIT = 7        # бесплатный лимит (было 10; ре
 PREMIUM_DAILY_LIMIT = 100   # fair-use «безлимита» подписки
 
 # Состояния подписок: device_id -> {"until": ISO, "product_id", "purchase_id"}.
-# В памяти (как и счётчики): после рестарта клиент переподтвердит при запуске.
+# Персистентно: файл рядом с main.py. Рестарты (деплой, переезд) больше
+# не сбрасывают подписки — «Восстановить покупки» нужно только при
+# смене устройства. (На Render диск эфемерный — там честно теряется.)
 premium_state: dict = {}
 PREMIUM_REFRESH_MARGIN_H = 12  # за 12 ч до истечения считаем переподтверждение нужным
+PREMIUM_STATE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "premium_state.json")
+
+
+def _premium_state_save() -> None:
+    try:
+        with open(PREMIUM_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(premium_state, f, ensure_ascii=False, indent=1)
+    except Exception as e:
+        print(f"premium_state save failed: {e}")
+
+
+def _premium_state_load() -> None:
+    try:
+        with open(PREMIUM_STATE_FILE, "r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            premium_state.update(loaded)
+            print(f"premium_state loaded: {len(premium_state)} устройств")
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        print(f"premium_state load failed: {e}")
+
+
+_premium_state_load()
 
 
 def is_premium(device_id: str) -> bool:
@@ -1438,6 +1466,7 @@ async def subscription_activate(req: SubscriptionActivateRequest):
         "product_id": req.product_id,
         "purchase_id": req.purchase_id,
     }
+    _premium_state_save()
     metrics["premium_activations"] += 1
     used, limit = get_daily_usage(req.device_id, 0)
     return {
