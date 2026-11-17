@@ -76,6 +76,7 @@ SERVER_STARTED_AT = time.time()
 
 metrics = {
     "ask_total": 0,
+    "limit_exhausted_total": 0,
     "ask_photo_total": 0,
     "identify_total": 0,
     "plan_total": 0,
@@ -89,6 +90,11 @@ vision_model_stats: dict = {
     m: {"success": 0, "fail": 0, "last_used_ts": None, "last_error": None}
     for m in AITUNNEL_VISION_MODELS
 }
+
+# Кто упёрся в дневной лимит: device_id -> последняя дата исчерпания.
+# Ручка для решения «не слишком ли щедрый фри-лимит»: если заметная доля
+# активных устройств ежедневно выбирает лимит — есть конверсионное давление.
+limit_exhausted: dict = {}
 
 error_log: deque = deque(maxlen=50)
 
@@ -672,6 +678,8 @@ def get_daily_usage(device_id: str, tz_offset_minutes: int = 0) -> tuple[int, in
 def increment_daily_usage(device_id: str, tz_offset_minutes: int = 0) -> tuple[int, int]:
     used, limit = get_daily_usage(device_id, tz_offset_minutes)
     if used >= limit:
+        metrics["limit_exhausted_total"] += 1
+        limit_exhausted[device_id] = _local_date_for_offset(tz_offset_minutes)
         raise HTTPException(
             status_code=429,
             detail=f"Дневной лимит исчерпан ({limit} запросов). Попробуйте завтра."
@@ -1728,6 +1736,8 @@ def admin_stats(_: None = None, x_admin_token: Optional[str] = Header(None)):
 
     now = time.time()
     uptime_sec = int(now - SERVER_STARTED_AT)
+    today_srv = datetime.now().isoformat()[:10]
+    exhausted_today = sum(1 for d in limit_exhausted.values() if d >= today_srv)
 
     model_stats_list = []
     for model_id, stats in vision_model_stats.items():
@@ -1752,6 +1762,7 @@ def admin_stats(_: None = None, x_admin_token: Optional[str] = Header(None)):
         "server_started_at": datetime.fromtimestamp(SERVER_STARTED_AT, tz=timezone.utc).isoformat().replace("+00:00", "Z"),
         "counters": dict(metrics),
         "active_devices_24h": len([d for d, r in daily_usage.items() if r.get("count", 0) > 0]),
+        "limit_exhausted_devices_today": exhausted_today,
         "premium_devices": len([d for d, r in premium_state.items()
                                 if is_premium(d)]),
         "premium_states": {d: r["until"] for d, r in premium_state.items()},
