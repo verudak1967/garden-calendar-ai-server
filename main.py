@@ -1974,7 +1974,7 @@ def _point_in_poly(poly: list, px: float, py: float) -> bool:
 # путь: sensor_data/<device_id>.json. Пороги — теплица (п.6.3 DIY-дока).
 
 SENSORS_TOKEN = os.getenv("SENSOR_INGEST_TOKEN", "")
-SENSORS_DIR = os.path.join(dirname, "sensor_data")
+SENSORS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sensor_data")
 SENSOR_KEEP = 10_000
 
 
