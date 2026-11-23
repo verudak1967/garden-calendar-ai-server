@@ -1967,6 +1967,128 @@ def _point_in_poly(poly: list, px: float, py: float) -> bool:
     return inside
 
 
+
+# ========== ДАТЧИКИ (обкатка: ESP8266 + DS18B20, теплица) ==========
+# Прошивка ESPHome шлёт показания раз в 5 минут с секретом в заголовке.
+# Хранилище — JSON-файл на устройство (кольцевой буфер 10k записей),
+# путь: sensor_data/<device_id>.json. Пороги — теплица (п.6.3 DIY-дока).
+
+SENSORS_TOKEN = os.getenv("SENSOR_INGEST_TOKEN", "")
+SENSORS_DIR = os.path.join(dirname, "sensor_data")
+SENSOR_KEEP = 10_000
+
+
+def _sensor_path(device_id: str) -> str:
+    # имя устройства — только [a-z0-9-], без путей
+    safe = re.sub(r"[^a-z0-9-]", "", device_id.lower())[:40]
+    if not safe:
+        raise HTTPException(400, "Некорректный device_id")
+    return os.path.join(SENSORS_DIR, safe + ".json")
+
+
+def _sensor_load(device_id: str) -> dict:
+    try:
+        with open(_sensor_path(device_id), encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {"device_id": device_id, "name": device_id, "readings": []}
+    except Exception:
+        return {"device_id": device_id, "name": device_id, "readings": []}
+
+
+def _sensor_save(data: dict) -> None:
+    os.makedirs(SENSORS_DIR, exist_ok=True)
+    with open(_sensor_path(data["device_id"]), "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+
+def _temp_state(t: float | None) -> str:
+    """Пороги теплицы: заморозок / перегрев / предвестники."""
+    if t is None:
+        return "nodata"
+    if t < 2 or t > 35:
+        return "red"
+    if t < 6 or t > 30:
+        return "yellow"
+    return "green"
+
+
+class SensorReading(BaseModel):
+    device_id: str
+    temp_c: float | None = None
+    moisture: float | None = None   # % почвы (будущие SKU)
+    light: float | None = None      # % (будущие SKU)
+    battery_v: float | None = None
+
+
+_sensor_last_post: dict = {}  # анти-спам: device_id -> ts
+
+
+@app.post("/api/sensors/ingest")
+def sensors_ingest(r: SensorReading, x_sensor_token: Optional[str] = Header(None)):
+    if not SENSORS_TOKEN:
+        raise HTTPException(503, "Приём датчиков не настроен")
+    if x_sensor_token != SENSORS_TOKEN:
+        raise HTTPException(401, "Неверный токен датчика")
+    now = time.time()
+    if now - _sensor_last_post.get(r.device_id, 0) < 30:
+        raise HTTPException(429, "Слишком часто")
+    _sensor_last_post[r.device_id] = now
+
+    data = _sensor_load(r.device_id)
+    rec = {"ts": int(now)}
+    for k in ("temp_c", "moisture", "light", "battery_v"):
+        v = getattr(r, k)
+        if v is not None:
+            rec[k] = v
+    data["readings"].append(rec)
+    data["readings"] = data["readings"][-SENSOR_KEEP:]
+    _sensor_save(data)
+    return {"ok": True, "stored": len(data["readings"])}
+
+
+@app.get("/api/sensors")
+def sensors_list():
+    if not os.path.isdir(SENSORS_DIR):
+        return []
+    out = []
+    for fn in os.listdir(SENSORS_DIR):
+        if not fn.endswith(".json"):
+            continue
+        try:
+            with open(os.path.join(SENSORS_DIR, fn), encoding="utf-8") as f:
+                d = json.load(f)
+            last = d["readings"][-1] if d.get("readings") else {}
+            t = last.get("temp_c")
+            out.append({
+                "device_id": d.get("device_id", fn[:-5]),
+                "name": d.get("name", fn[:-5]),
+                "temp_c": t,
+                "moisture": last.get("moisture"),
+                "light": last.get("light"),
+                "battery_v": last.get("battery_v"),
+                "state": _temp_state(t),
+                "last_seen": last.get("ts"),
+            })
+        except Exception:
+            continue
+    out.sort(key=lambda x: x.get("last_seen") or 0, reverse=True)
+    return out
+
+
+@app.get("/api/sensors/{device_id}/history")
+def sensors_history(device_id: str, hours: int = 24):
+    cutoff = time.time() - max(1, hours) * 3600
+    d = _sensor_load(device_id)
+    return {
+        "device_id": d["device_id"],
+        "name": d.get("name", device_id),
+        "state": _temp_state(d["readings"][-1].get("temp_c") if d.get("readings") else None),
+        "readings": [r for r in d.get("readings", []) if r.get("ts", 0) >= cutoff],
+    }
+
+
+
 @app.post("/api/plan-layout")
 async def plan_layout(req: PlanLayoutRequest):
     if _maintenance_on():
