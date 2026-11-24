@@ -2015,7 +2015,10 @@ def _temp_state(t: float | None) -> str:
 
 class SensorReading(BaseModel):
     device_id: str
-    temp_c: float | None = None
+    temp_c: float | None = None          # воздух (или основной щуп)
+    air_humidity: float | None = None    # влажность воздуха, % (SHT31)
+    pressure: float | None = None        # давление, мм рт.ст. (BME280)
+    temp_soil_c: float | None = None     # температура почвы (DS18B20/NTC)
     moisture: float | None = None   # % почвы (будущие SKU)
     light: float | None = None      # % (будущие SKU)
     battery_v: float | None = None
@@ -2037,7 +2040,8 @@ def sensors_ingest(r: SensorReading, x_sensor_token: Optional[str] = Header(None
 
     data = _sensor_load(r.device_id)
     rec = {"ts": int(now)}
-    for k in ("temp_c", "moisture", "light", "battery_v"):
+    for k in ("temp_c", "air_humidity", "pressure", "temp_soil_c",
+              "moisture", "light", "battery_v"):
         v = getattr(r, k)
         if v is not None:
             rec[k] = v
@@ -2063,7 +2067,11 @@ def sensors_list():
             out.append({
                 "device_id": d.get("device_id", fn[:-5]),
                 "name": d.get("name", fn[:-5]),
+                "location": d.get("location") or "Без места",
                 "temp_c": t,
+                "temp_soil_c": last.get("temp_soil_c"),
+                "air_humidity": last.get("air_humidity"),
+                "pressure": last.get("pressure"),
                 "moisture": last.get("moisture"),
                 "light": last.get("light"),
                 "battery_v": last.get("battery_v"),
@@ -2074,6 +2082,28 @@ def sensors_list():
             continue
     out.sort(key=lambda x: x.get("last_seen") or 0, reverse=True)
     return out
+
+
+class SensorMetaUpdate(BaseModel):
+    name: str | None = None
+    location: str | None = None
+
+
+@app.patch("/api/sensors/{device_id}")
+def sensors_patch(device_id: str, meta: SensorMetaUpdate,
+                  x_sensor_token: Optional[str] = Header(None)):
+    """Имя и место устройства — задаётся из приложения."""
+    if not SENSORS_TOKEN:
+        raise HTTPException(503, "Приём датчиков не настроен")
+    if x_sensor_token != SENSORS_TOKEN:
+        raise HTTPException(401, "Неверный токен")
+    data = _sensor_load(device_id)
+    if meta.name is not None:
+        data["name"] = meta.name.strip()[:40]
+    if meta.location is not None:
+        data["location"] = meta.location.strip()[:40]
+    _sensor_save(data)
+    return {"ok": True, "name": data.get("name"), "location": data.get("location")}
 
 
 @app.get("/api/sensors/{device_id}/history")
