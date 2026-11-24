@@ -2121,6 +2121,20 @@ def sensors_patch(device_id: str, meta: SensorMetaUpdate,
             "thresholds": data.get("thresholds")}
 
 
+@app.delete("/api/sensors/{device_id}")
+def sensors_delete(device_id: str, x_sensor_token: Optional[str] = Header(None)):
+    """Удаление устройства вместе с историей."""
+    if not SENSORS_TOKEN:
+        raise HTTPException(503, "Приём датчиков не настроен")
+    if x_sensor_token != SENSORS_TOKEN:
+        raise HTTPException(401, "Неверный токен")
+    path = _sensor_path(device_id)
+    if os.path.exists(path):
+        os.remove(path)
+        return {"ok": True}
+    raise HTTPException(404, "Устройство не найдено")
+
+
 @app.get("/api/sensors/{device_id}/history")
 def sensors_history(device_id: str, hours: int = 24):
     cutoff = time.time() - max(1, hours) * 3600
