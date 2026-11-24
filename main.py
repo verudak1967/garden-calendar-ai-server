@@ -2099,13 +2099,8 @@ class SensorMetaUpdate(BaseModel):
 
 
 @app.patch("/api/sensors/{device_id}")
-def sensors_patch(device_id: str, meta: SensorMetaUpdate,
-                  x_sensor_token: Optional[str] = Header(None)):
-    """Имя и место устройства — задаётся из приложения."""
-    if not SENSORS_TOKEN:
-        raise HTTPException(503, "Приём датчиков не настроен")
-    if x_sensor_token != SENSORS_TOKEN:
-        raise HTTPException(401, "Неверный токен")
+def sensors_patch(device_id: str, meta: SensorMetaUpdate):
+    """Имя, место и пороги — управление из приложения (без токена)."""
     data = _sensor_load(device_id)
     if meta.name is not None:
         data["name"] = meta.name.strip()[:40]
@@ -2122,12 +2117,8 @@ def sensors_patch(device_id: str, meta: SensorMetaUpdate,
 
 
 @app.delete("/api/sensors/{device_id}")
-def sensors_delete(device_id: str, x_sensor_token: Optional[str] = Header(None)):
-    """Удаление устройства вместе с историей."""
-    if not SENSORS_TOKEN:
-        raise HTTPException(503, "Приём датчиков не настроен")
-    if x_sensor_token != SENSORS_TOKEN:
-        raise HTTPException(401, "Неверный токен")
+def sensors_delete(device_id: str):
+    """Удаление устройства вместе с историей (из приложения)."""
     path = _sensor_path(device_id)
     if os.path.exists(path):
         os.remove(path)
