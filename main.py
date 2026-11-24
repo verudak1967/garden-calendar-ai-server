@@ -2002,13 +2002,19 @@ def _sensor_save(data: dict) -> None:
         json.dump(data, f, ensure_ascii=False)
 
 
-def _temp_state(t: float | None) -> str:
-    """Пороги теплицы: заморозок / перегрев / предвестники."""
+def _temp_state(t: float | None, thr: dict | None = None) -> str:
+    """Пороги теплицы: заморозок / перегрев / предвестники.
+    thr: {"low_red":2, "low_yellow":6, "high_yellow":30, "high_red":35}."""
+    th = thr or {}
+    low_red = th.get("low_red", 2.0)
+    low_yellow = th.get("low_yellow", 6.0)
+    high_yellow = th.get("high_yellow", 30.0)
+    high_red = th.get("high_red", 35.0)
     if t is None:
         return "nodata"
-    if t < 2 or t > 35:
+    if t < low_red or t > high_red:
         return "red"
-    if t < 6 or t > 30:
+    if t < low_yellow or t > high_yellow:
         return "yellow"
     return "green"
 
@@ -2075,7 +2081,9 @@ def sensors_list():
                 "moisture": last.get("moisture"),
                 "light": last.get("light"),
                 "battery_v": last.get("battery_v"),
-                "state": _temp_state(t),
+                "state": _temp_state(t, d.get("thresholds")),
+                "thresholds": d.get("thresholds") or {
+                    "low_red": 2.0, "low_yellow": 6.0, "high_yellow": 30.0, "high_red": 35.0},
                 "last_seen": last.get("ts"),
             })
         except Exception:
@@ -2087,6 +2095,7 @@ def sensors_list():
 class SensorMetaUpdate(BaseModel):
     name: str | None = None
     location: str | None = None
+    thresholds: dict | None = None  # low_red/low_yellow/high_yellow/high_red
 
 
 @app.patch("/api/sensors/{device_id}")
@@ -2102,8 +2111,14 @@ def sensors_patch(device_id: str, meta: SensorMetaUpdate,
         data["name"] = meta.name.strip()[:40]
     if meta.location is not None:
         data["location"] = meta.location.strip()[:40]
+    if meta.thresholds:
+        thr = {k: float(v) for k, v in meta.thresholds.items()
+               if k in ("low_red", "low_yellow", "high_yellow", "high_red")}
+        if thr:
+            data["thresholds"] = thr
     _sensor_save(data)
-    return {"ok": True, "name": data.get("name"), "location": data.get("location")}
+    return {"ok": True, "name": data.get("name"), "location": data.get("location"),
+            "thresholds": data.get("thresholds")}
 
 
 @app.get("/api/sensors/{device_id}/history")
@@ -2113,7 +2128,9 @@ def sensors_history(device_id: str, hours: int = 24):
     return {
         "device_id": d["device_id"],
         "name": d.get("name", device_id),
-        "state": _temp_state(d["readings"][-1].get("temp_c") if d.get("readings") else None),
+        "state": _temp_state(
+            d["readings"][-1].get("temp_c") if d.get("readings") else None,
+            d.get("thresholds")),
         "readings": [r for r in d.get("readings", []) if r.get("ts", 0) >= cutoff],
     }
 
