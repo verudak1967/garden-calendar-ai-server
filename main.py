@@ -2025,6 +2025,7 @@ class SensorReading(BaseModel):
     air_humidity: float | None = None    # влажность воздуха, % (SHT31)
     pressure: float | None = None        # давление, мм рт.ст. (BME280)
     temp_soil_c: float | None = None     # температура почвы (DS18B20/NTC)
+    rssi: float | None = None            # сигнал Wi-Fi, dBm (wifi_signal)
     moisture: float | None = None   # % почвы (будущие SKU)
     light: float | None = None      # % (будущие SKU)
     battery_v: float | None = None
@@ -2047,7 +2048,7 @@ def sensors_ingest(r: SensorReading, x_sensor_token: Optional[str] = Header(None
     data = _sensor_load(r.device_id)
     rec = {"ts": int(now)}
     for k in ("temp_c", "air_humidity", "pressure", "temp_soil_c",
-              "moisture", "light", "battery_v"):
+              "rssi", "moisture", "light", "battery_v"):
         v = getattr(r, k)
         if v is not None:
             rec[k] = v
@@ -2081,6 +2082,7 @@ def sensors_list():
                 "moisture": last.get("moisture"),
                 "light": last.get("light"),
                 "battery_v": last.get("battery_v"),
+                "rssi": last.get("rssi"),
                 "state": _temp_state(t, d.get("thresholds")),
                 "thresholds": d.get("thresholds") or {
                     "low_red": 2.0, "low_yellow": 6.0, "high_yellow": 30.0, "high_red": 35.0},
